@@ -6,6 +6,7 @@ Copyright (c) 2012 Walter Mundt; see LICENSE file for details.
 import argparse
 from contextlib import contextmanager
 import inspect
+from itertools import islice
 import io
 import logging
 import os
@@ -21,6 +22,7 @@ _dbg = _logger.debug
 _info = _logger.info
 _warn = _logger.warning
 
+_grouped_digits_re = re.compile(r'(\d+)')
 def nat_sort_key(val):
     """ Splits a string into a tuple of string components and
         integer components, such that sorting a list of strings
@@ -31,14 +33,14 @@ def nat_sort_key(val):
         Works poorly on strings of hex digits and in other similar
         cases.
     """
-    def _conv(item):
-	try:
-	    return int(item)
-	except:
-	    return item
-    rv = tuple(filter(None, map(_conv, re.split("(\d+)", str(val)))))
-    _dbg("nat_sort_key: %r -> %r", s, rv)
-    return rv
+    split_val = _grouped_digits_re.split(str(val))
+    for i in xrange(1, len(split_val), 2):
+        split_val[i] = int(split_val[i])
+    start = 1 if split_val[0] == '' else 0
+    end = -1 if split_val[-1] == '' else None
+    split_val = split_val[start:end]
+    # _dbg("nat_sort_key: %r -> %r", val, split_val)
+    return split_val
 
 @contextmanager
 def io_pipe():
@@ -75,6 +77,11 @@ class WatchedThread(threading.Thread):
     """
     _any_exit = threading.Condition()
 
+    def __repr__(self):
+        return "WatchedThread(%s, %s)" % (self.name,
+            { key: getattr(self, key) for key in
+              ['active', 'died', 'will_throw']})
+
     def __init__(self, name, target, fail_cb = None, **kw):
 	threading.Thread.__init__(self, **kw)
         self._lock = threading.RLock()
@@ -88,10 +95,15 @@ class WatchedThread(threading.Thread):
 	self.exc_info = None
         self.daemon = True
 
+        self._dbg = _logger.getChild("WatchedThread.%s" % self.name).debug
+        self._dbg("Created %r", self)
+
     def run(self):
         self.active = True
+        self._dbg("Started %r", self)
 	try:
 	    self.rv = self.target()
+            self._dbg("Finished %r", self)
 	except:
 	    _logger.exception("uncaught exception in thread %s" % self.name)
             with self._lock:
@@ -107,12 +119,14 @@ class WatchedThread(threading.Thread):
             with self._any_exit:
                 self.active = False
                 self._any_exit.notify_all()
+            self._dbg("Finally %r", self)
 
     @property
     def will_throw(self):
 	return self.exc_info is not None
 
     def reraise(self):
+        self._dbg("Reraise %r", self)
 	if self.exc_info is not None:
             with self._lock:
                 if self.exc_info is None:
@@ -125,6 +139,7 @@ class WatchedThread(threading.Thread):
                     self.exc_info = None # clear ref cycle
 
     def join(self, *args, **kw):
+        self._dbg("Join %r", self)
 	rv = threading.Thread.join(self, *args, **kw)
 	self.reraise()
 	return rv
@@ -136,6 +151,7 @@ class WatchedThread(threading.Thread):
         end_time = None if timeout is None else time.time() + timeout
         while any(thread.active for thread in threads):
             with cls._any_exit:
+                _dbg('loop in WatchedThread.join_all%r', threads)
                 for thread in threads:
                     thread.reraise()
                 time_left = end_time - time.time() \
