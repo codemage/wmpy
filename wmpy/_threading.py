@@ -1,7 +1,7 @@
-import threading
+import os
 import sys
-import time
 import threading
+import time
 
 from . import _logging
 _logger, _dbg, _warn, _error = _logging.get_logging_shortcuts(__name__)
@@ -36,16 +36,16 @@ class WatchedThread(threading.Thread):
               ['active', 'died', 'will_throw']})
 
     def __init__(self, name, target, fail_cb = None, **kw):
-	threading.Thread.__init__(self, **kw)
+        threading.Thread.__init__(self, **kw)
         self._lock = threading.RLock()
-	self.name = name
-	self.target = target
-	self.fail_cb = fail_cb
+        self.name = name
+        self.target = target
+        self.fail_cb = fail_cb
         self.active = False # used instead of isAlive in case
                             # join_all catches the space between
                             # _any_exit().notify_all() and thread death
         self.died = False
-	self.exc_info = None
+        self.exc_info = None
         self.daemon = True
 
         self._dbg = _logger.getChild("WatchedThread.%s" % self.name).debug
@@ -54,18 +54,18 @@ class WatchedThread(threading.Thread):
     def run(self):
         self.active = True
         self._dbg("Started %r", self)
-	try:
-	    self.rv = self.target()
+        try:
+            self.rv = self.target()  # pylint: disable=W0201
             self._dbg("Finished %r", self)
-	except:
-	    _logger.exception("uncaught exception in thread %s" % self.name)
+        except BaseException:
+            _logger.exception("uncaught exception in thread %s" % self.name)
             with self._lock:
                 self.exc_info = sys.exc_info()
                 self.died = True
             if self.fail_cb is None:
                 sys.stdout.flush()
                 sys.stderr.flush()
-                os._exit(1)
+                os._exit(1)  # pylint: disable=W0212
             else:
                 self.fail_cb()
         finally:
@@ -76,11 +76,11 @@ class WatchedThread(threading.Thread):
 
     @property
     def will_throw(self):
-	return self.exc_info is not None
+        return self.exc_info is not None
 
     def reraise(self):
         self._dbg("Reraise %r", self)
-	if self.exc_info is not None:
+        if self.exc_info is not None:
             with self._lock:
                 if self.exc_info is None:
                     return # it went away while getting the lock
@@ -93,9 +93,9 @@ class WatchedThread(threading.Thread):
 
     def join(self, *args, **kw):
         self._dbg("Join %r", self)
-	rv = threading.Thread.join(self, *args, **kw)
-	self.reraise()
-	return rv
+        rv = threading.Thread.join(self, *args, **kw)
+        self.reraise()
+        return rv
 
     @classmethod
     def join_all(cls, *threads, **kw):

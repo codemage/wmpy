@@ -2,6 +2,9 @@ import argparse
 import inspect
 import sys
 
+from . import _logging
+_logger, _dbg, _warn, _error = _logging.get_logging_shortcuts(__name__)
+
 class ArgSpec(object):
     """ Wrapper around inspect.getargspec that adds some niceties.
 
@@ -38,13 +41,12 @@ class ArgSpec(object):
         self.positionals = self.args + \
             ([self.varargs] if self.varargs is not None else [])
 
-	# build a mapping from argument names to their default values, if any:
-	if defaults is None:
+        # build a mapping from argument names to their default values, if any:
+        if defaults is None:
             self.defaults = {}
-	else:
+        else:
             defaulted_args = self.args[-len(defaults):]
-	    self.defaults = {name: val
-		for name, val in zip(defaulted_args, defaults)}
+            self.defaults = dict(zip(defaulted_args, defaults))
 
     def make_call_args(self, arguments):
         args = []
@@ -53,12 +55,15 @@ class ArgSpec(object):
             if arg in kw:
                 args.append(kw.pop(arg))
             elif arg in self.defaults:
-                arg.append(self.defaults[arg])
+                args.append(self.defaults[arg])
             else:
                 raise TypeError("missing argument in call to %s(): %s" %
                     (self.func.__name__, arg))
         if self.varargs is not None:
             args.extend(kw.pop(self.varargs))
+        if self.keywords is None and len(kw) > 0:
+            raise TypeError("unknown arguments %s in call to %s" % 
+                (kw, self.func.__name__))
         return args, kw
 
     def __call__(self, **arguments):
@@ -96,7 +101,7 @@ class ParserGenerator(object):
         a default setting for when the flag is absent.
     """
 
-    def __init__(self, ignored_args = [], **common_options):
+    def __init__(self, ignored_args = (), **common_options):
         """ ignored_args should be a sequence of argument names; these are not
             added to the parser as arguments by default; they must be passed as
             keyword arguments to the built `parse_and_call`.
@@ -108,7 +113,8 @@ class ParserGenerator(object):
         self.ignored_args = ignored_args
         self.common_options = self._fix_argparse_dicts(common_options)
 
-    def build_parser(self, argspec, arguments):
+    @staticmethod
+    def build_parser(argspec, arguments):
         """ May be overridden to customize how the parser instance
             is build before adding arguments.
 
@@ -125,7 +131,8 @@ class ParserGenerator(object):
             parser_args.setdefault('description', argspec.func.__doc__)
         return argparse.ArgumentParser(**parser_args)
 
-    def _fix_argparse_dicts(self, arguments):
+    @staticmethod
+    def _fix_argparse_dicts(arguments):
         return {
             name: (info if isinstance(info, dict)
                    else dict(action='store_const', const=info))
@@ -179,48 +186,51 @@ class ParserGenerator(object):
         # canonicalize non-dict keywords from decorator into store_const:
         arguments = self._fix_argparse_dicts(arguments)
 
-	argspec = ArgSpec(func)
+        argspec = ArgSpec(func)
 
         func.args = {}
         func.required_args = set()
         func.unparsed_args = set()
-	for arg in argspec.args:
-	    if arg in ignore:
+        for arg in argspec.args:
+            if arg in ignore:
                 if arg not in arguments:
                     func.unparsed_args.add(arg)
                 if arg not in argspec.defaults:
                     func.required_args.add(arg)
-		continue # don't default these to anything
+                continue # don't default these to anything
 
-	    # anything completly missing from the spec is a positional:
-            if arg not in arguments:
+            if arg in self.common_options:
+                _dbg("%s: defaulting %s to common arg",
+                    func.__name__, arg)
+                arguments[arg] = self.common_options[arg]
+            elif arg not in arguments:
                 _dbg("%s: defaulting %s to positional",
                     func.__name__, arg)
                 arguments[arg] = {
                     'nargs': '?' if arg in argspec.defaults else None}
-	
-	if argspec.varargs is not None:
-	    arguments.setdefault(argspec.varargs, {})
-	    arguments[argspec.varargs].setdefault('nargs', '*')
+        
+        if argspec.varargs is not None:
+            arguments.setdefault(argspec.varargs, {})
+            arguments[argspec.varargs].setdefault('nargs', '*')
 
         # now that we have the arguments dict all filled in,
         # build a parser out of it
         parser = self.build_parser(argspec, arguments)
 
-	# add positional arguments from the function signature in order first,
+        # add positional arguments from the function signature in order first,
         # stripping them out of the arguments dict as we go
-	for arg in argspec.positionals:
+        for arg in argspec.positionals:
             if arg in arguments:
-		self._add_arg(argspec, parser,
+                self._add_arg(argspec, parser,
                     arg, arguments.pop(arg))
 
-	# the rest ought to be **kw params, for which don't care about ordering
-	for flag, info in arguments.iteritems():
-	    self._add_arg(argspec, parser, flag, info)
+        # the rest ought to be **kw params, for which don't care about ordering
+        for flag, info in arguments.iteritems():
+            self._add_arg(argspec, parser, flag, info)
 
         # we have a parser, build parse_and_call
-	def parse_and_call(argv, **other_args):
-	    options = vars(parser.parse_args(argv))
+        def parse_and_call(argv, **other_args):
+            options = vars(parser.parse_args(argv))
             options.update(other_args)
             return argspec(**options)
 
@@ -228,8 +238,8 @@ class ParserGenerator(object):
         # and return it.
         # (We don't wrap the function so that it is still possible to call it
         # with the original signature instead of an argv.)
-	func.parser = parser
-	func.parse_and_call = parse_and_call
+        func.parser = parser
+        func.parse_and_call = parse_and_call
         func.call_with_options = argspec
-	return func
+        return func
 
