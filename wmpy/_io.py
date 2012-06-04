@@ -11,7 +11,7 @@ _logger, _dbg, _warn, _error = _logging.get_logging_shortcuts(__name__)
 class ClosingContextMixin(_logging.InstanceLoggingMixin,
                           object):
     """ Mixin for objects that just want close() on __exit__ """
-    __slots__ = []
+    __slots__ = ()
     def __enter__(self):
         return self
 
@@ -21,23 +21,20 @@ class ClosingContextMixin(_logging.InstanceLoggingMixin,
 
 class Pipe(ClosingContextMixin,
            # _logging.InstanceLoggingMixin,
-           object):
+           ):
     """ Context manager that wraps `os.pipe()`, yielding the read and
         write sides of the pipe after wrapping them with io.open;
         ensures that both ends are closed on exit from the with block.
     """
-    __slots__ = ()
-    def __new__(cls, r_bufsize=0, w_bufsize=0):
+    __slots__ = ('r', 'w')
+    def __init__(self, r_bufsize=0, w_bufsize=0):
+        super(Pipe, self).__init__()
         rfd, wfd = os.pipe()
-        super(Pipe, cls).__new__(cls,
-            io.open(rfd, 'rb', r_bufsize),
-            io.open(wfd, 'wb', w_bufsize))
+        self.r = io.open(rfd, 'rb', r_bufsize)
+        self.w = io.open(wfd, 'wb', w_bufsize)
 
-    if False: # for linter
-        def __init__(self, r, w):
-            super(Pipe, self).__init__()
-            self.r = r
-            self.w = w
+    def __iter__(self):
+        return iter((self.r, self.w))
 
     def close(self):
         if not self.r.closed:
@@ -80,16 +77,12 @@ class Poller(ClosingContextMixin,
         del self._poll
     def poll(self, *args):
         empty = True
-        self._dbg('enter poll()')
         events = self._poll.poll(*args)
         self._dbg('poll() events => %r fds = %r', events, self._handlers)
-        fds = self._handlers.keys()
-        self._dbg('select(%s) => %s', str(fds), select.select(fds, fds, fds, 0))
         for fd, event in events:
             empty = False
             self._dbg('poll() enter handler[%d] event=%d', fd, event)
             self._handlers[fd](fd, event)
-            self._dbg('poll() exit handler[%d] event=%d', fd, event)
         self._dbg('exit poll()')
         return empty
 

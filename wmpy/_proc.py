@@ -85,7 +85,7 @@ class Cmd(_logging.InstanceLoggingMixin):
                 kw[k] = kw[k].fileno()
             except:
                 pass
-        self._dbg('init %s', kw)
+        #self._dbg('init %s', kw)
 
     def update(self, **popen_kwargs):
         """ Returns copy of self with the Popen keywords specified
@@ -108,20 +108,48 @@ class Cmd(_logging.InstanceLoggingMixin):
             # shell=True -> should be a single cmd, join args:
             # don't escape, we want to allow shell metacharacters if we are
             # doing this at all
-            argv = self.argv.join(' ')
+            argv = ' '.join(self.argv)
         else:
             argv = self.argv
         return sp.Popen(argv, **_popen_kw)
 
     def popen(self):
         """ Returns a Popen instance instantiated based on my settings. """
-        self._dbg("popen()")
+        self._dbg("popen() %r",
+            self._kw_desc(self.popen_kwargs))
         return self._popen(self.popen_kwargs)
+
+    @staticmethod
+    def _fd_desc(fd):
+        if fd == sp.PIPE:
+            return 'PIPE'
+        elif fd == sp.STDOUT:
+            return 'STDOUT'
+        elif hasattr(fd, 'fileno'):
+            if fd.closed:
+                return '_'
+            else:
+                return fd.fileno()
+        else:
+            return fd
+
+    @classmethod
+    def _kw_desc(cls, kwargs):
+        kw_desc = kwargs.copy()
+        for fdarg in 'stdin', 'stdout', 'stderr':
+            fd = cls._fd_desc(kw_desc.pop(fdarg, None))
+            if fd is not None:
+                kw_desc[fdarg] = fd
+        preexec_fn = kw_desc.pop('preexec_fn', None)
+        if preexec_fn is not None:
+            kw_desc['preexec_fn'] = preexec_fn.func_name + '()'
+        return kw_desc
 
     def run(self, stdin_data=''):
         kwargs_with_pipe = dict({'stdin': sp.PIPE, 'stdout': sp.PIPE},
             **self.popen_kwargs)
-        self._dbg("run(<%d bytes>) %r", len(stdin_data), kwargs_with_pipe)
+        self._dbg("run(<%d bytes>) %r", len(stdin_data),
+            self._kw_desc(kwargs_with_pipe))
         proc = self._popen(kwargs_with_pipe)
         stdout, stderr = proc.communicate(stdin_data)
         if proc.returncode != 0:
@@ -173,57 +201,28 @@ class PopenPipeline(_io.ClosingContextMixin,
         it does NOT close any that were passed in from outside.  May be used
         as a context manager to ensure that the pipes are closed promptly.
 
-        Has a `returncode` property, which is `None` as long as any process in
-        the pipeline is running; afterwards it is the return code of the last
-        process.
+        Has a `returncodes` property, which is `None` as long as any process in
+        the pipeline is running; afterwards it is a tuple of the returncodes
+        of the processes in the pipeline.  `returncode` is a shortcut to the
+        last value in `returncodes`, and is also None until all children
+        exit.  Both are only updated on calls to `poll()` or `wait()`.
 
         Has an iterable `procs` property is a sequence of the `subprocess.Popen`
         instances that are linked together to form the pipeline.  This may be
-        used to examine individual processes' return codes or pids or to
-        send them signals.  Attempting to access the I/O stream attributes
-        of the component `Popen` instances is not recommended.
+        used to examine individual processes' pids or to send them signals.
+        Attempting to access the I/O stream attributes of the component `Popen`
+        instances is not recommended.
     """
-    def __init__(self, first_cmd, *remaining_cmds, **kw):
-        # keyword-only parameters for stream redirection:
+    def __init__(self, *commands, **kw):
+        # keyword-only parameters for stream redirection amd preexec_fn:
         stdin = kw.pop('stdin', None)
         stdout = kw.pop('stdout', None)
         stderr = kw.pop('stderr', None)
+        preexec_fn = kw.pop('preexec_fn', None)
 
         super(PopenPipeline, self).__init__()
-        if kw.pop('_first', True):
-            self._dbg('init(%r, %r, %r)', first_cmd, remaining_cmds, kw)
 
-        self.cmd = first_cmd.default(close_fds=True).update(
-            stdin=stdin,
-            stdout=sp.PIPE if len(remaining_cmds) > 0 else stdout,
-            stderr=stderr,
-            **kw)
-        self.proc = self.cmd.popen()
-        self.stdin = self.proc.stdin
-        if stderr == sp.PIPE:
-            # we want to have one stderr pipe for the whole pipeline, so
-            # grab it and pass it on down the pipeline:
-            self.stderr = stderr = self.proc.stderr
-        else:
-            self.stderr = None
-        if len(remaining_cmds) == 0:
-            # end of the line; set stdout from this proc, which gets
-            # propagated back up as the whole pipeline's stdout:
-            self.next = None
-            self.stdout = self.proc.stdout
-            self._dbg('->popen %x => pipeline_stdout %s', id(self.cmd), self.stdout.fileno())
-        else:
-            self._dbg('->popen %x => next_stdout %s', id(self.cmd), self.proc.stdout.fileno())
-            self.next = type(self)(  # build another instance of same type:
-                    stdin=self.proc.stdout,
-                    stdout=stdout, stderr=stderr,
-                    _first=False,
-                    *remaining_cmds, **kw)
-            # self.proc's stdout was made into the next cmd's stdin, close it:
-            self.proc.stdout.close()
-            # our "stdout" should come from the end of the pipeline:
-            self.stdout = self.next.stdout
-        
+        # this is state for communicate():
         self._communicate_called = False
         self._poller = None
         self._close_pipe = None
@@ -232,40 +231,115 @@ class PopenPipeline(_io.ClosingContextMixin,
         self.stdout_data = None
         self.stderr_data = None
 
+        # okay, let's get to work...
+        self.cmds = []
+        self.procs = []
+        self._parent_fds = []
+        self._orig_preexec_fn = preexec_fn
+        self.stderr = None
+        should_close_stderr = False
+        if stderr is sp.PIPE:
+            # we want to have one stderr pipe for the whole pipeline, so
+            # we set it up ourselves:
+            self.stderr, stderr = _io.Pipe()
+            self._parent_fds.append(self.stderr.fileno())
+            should_close_stderr = True
+        try:
+            for i, cmd in enumerate(commands):
+                is_last_cmd = (i == len(commands) - 1)
+                self.cmds.append(cmd.update(
+                    stdin=stdin,
+                    stdout=stdout if is_last_cmd else sp.PIPE,
+                    stderr=stderr,
+                    preexec_fn=self._preexec,
+                    **kw))
+                self.procs.append(self.cmds[i].popen())
+                _fd = lambda fp: fp if isinstance(fp, int) else (fp.fileno() if fp and not fp.closed else '_')
+                p = self.procs[-1]
+                self._dbg('[%d]: in=%s out=%s err=%s', i, _fd(p.stdin), _fd(p.stdout), _fd(p.stderr))
+                if i > 0:
+                    # stdin is connected the previous command in the pipeline, we
+                    # don't want to hold on to it:
+                    stdin.close()
+                if not is_last_cmd:
+                    # next command's stdin should use our stdout:
+                    stdin = self.procs[i].stdout
+                if i == 0:
+                    if self.procs[0].stdin:
+                        self._dbg('adding stdin %s to parent fds:', self.procs[0].stdin.fileno())
+                        self._parent_fds.append(self.procs[0].stdin.fileno())
+                    elif stdin not in (None, STDOUT):
+                        self._dbg('adding stdin %s to parent fds:', _fd(stdin))
+                        self._parent_fds.append(_fd(stdin))
+        except BaseException:
+            self.close(suppress_exc=True)
+            raise
+        finally:
+            if should_close_stderr:
+                stderr.close()
+
+        # these are only used in self._preexec:
+        del self._parent_fds
+        del self._orig_preexec_fn
+
+        # stdin and stdout come from the ends of the pipeline:
+        self.stdin = self.procs[0].stdin
+        self.stdout = self.procs[-1].stdout
+
+        self._returncodes = None
+
+    def _preexec(self):
+        for fd in self._parent_fds:
+        #    sys.stderr.write('PID {0} preexec: closing {1}\n'.format(os.getpid(), fd))
+            os.close(fd)
+        #os.system('exec 1>&2; echo Files for PID {0}:; ls -l /proc/{0}/fd'.format(os.getpid()))
+        if self._orig_preexec_fn is not None:
+            return self._orig_preexec_fn()
+
     @property
-    def procs(self):
-        cur = self
-        while cur is not None:
-            yield cur.proc
-            cur = cur.next
+    def returncodes(self):
+        if self._returncodes is not None:
+            return self._returncodes
+        if any(p.returncode is None for p in self.procs):
+            return None
+        self._returncodes = tuple(p.returncode for p in self.procs)
+        return self._returncodes
 
     @property
     def returncode(self):
-        for proc in self.procs:
-            if proc.returncode is None:
-                return None
-            rv = proc.returncode
-        return rv
+        if self.returncodes is None:
+            return None
+        return self.returncodes[-1]
 
     def poll(self):
-        for proc in self.procs:
-            if proc.poll() is None:
-                return None
-            rv = proc.returncode
-        return rv
+        if any(p.poll() is None for p in self.procs):
+            return None
+        return self.returncodes
 
     def wait(self):
-        for proc in self.procs:
-            rv = proc.wait()
-        return rv
+        return tuple(p.wait() for p in self.procs)
 
-    def close(self):
-        for item in (self.proc.stdin, self.proc.stdout,
-                     self.stderr, self._poller, self.next):
-            if item is not None:
-                if hasattr(item, 'closed') and item.closed:
-                    continue
-                item.close()
+    @staticmethod
+    def _doclose(obj, suppress_exc):
+        if obj is None:
+            return
+        try:
+            obj.close()
+        except BaseException:
+            if not suppress_exc:
+                raise
+            self._warn("suppressed exception in _doclose()", exc_info=True)
+
+    def close(self, suppress_exc=False):
+        try:
+            for proc in self.procs:
+                for stream in proc.stdin, proc.stdout, proc.stderr:
+                    self._doclose(stream, suppress_exc)
+            self._doclose(self._poller, suppress_exc)
+        except BaseException:
+            if not suppress_exc:
+                raise
+            self._warn("suppressed exception in close()", exc_info=True)
 
     def _comm_setup_poller(self, stdin_data, poller=None):
         if getattr(self, '_communicate_called', False):
@@ -273,14 +347,12 @@ class PopenPipeline(_io.ClosingContextMixin,
         self._communicate_called = True
 
         if stdin_data:
+            #self._dbg('got stdin data, writing to %s', self.stdin.fileno())
             self.stdin_data = memoryview(stdin_data)
-            self._dbg('got stdin data, writing to %s', self.stdin.fileno())
         elif self.stdin:
-            self._dbg('no stdin data, closing %s', self.stdin.fileno())
+            #self._dbg('no stdin data, closing %s', self.stdin.fileno())
             self.stdin.close()
             self.stdin = None
-        else:
-            self._dbg('neither stdin_data nor stdin present')
 
         self.stdout_data = []
         self.stderr_data = []
@@ -290,9 +362,9 @@ class PopenPipeline(_io.ClosingContextMixin,
             poller = self._poller = _io.Poller()
 
         def _close_pipe(fp):
-            desc = 'stdin' if fp is self.stdin else (
-                   'stdout' if fp is self.stdout else 'stderr')
-            self._dbg("closing %s fd %d", desc, fp.fileno())
+            #desc = 'stdin' if fp is self.stdin else (
+            #       'stdout' if fp is self.stdout else 'stderr')
+            #self._dbg("closing %s fd %d", desc, fp.fileno())
             poller.unregister(fp)
             fp.close()
             self._open_pipes -= 1
@@ -313,9 +385,14 @@ class PopenPipeline(_io.ClosingContextMixin,
         return poller
 
     def communicate(self, stdin_data=''):
+        prev_codes = [None] * len(self.procs)
         with self, self._comm_setup_poller(stdin_data) as poller:
             while self._open_pipes > 0 or self.poll() is None:
-                self._dbg('poll: %s %s', self._open_pipes, self.poll())
+                codes = [p.poll() for p in self.procs]
+                for i, (prev, cur) in enumerate(zip(prev_codes, codes)):
+                    if cur is not None and prev is None:
+                        _dbg('[%d]: "%s" exited %s', i, self.cmds[i]._logging_desc, cur)
+                prev_codes = codes
                 if self.stdin_data:
                     self.send_stdin(self.stdin.fileno(), poller.OUT)
                 poller.poll(1000)
@@ -343,7 +420,7 @@ class PopenPipeline(_io.ClosingContextMixin,
         if self.stdin_data:
             try:
                 written = os.write(fd, self.stdin_data[:select.PIPE_BUF])
-                self._dbg('%d bytes written to stdin', written)
+                #self._dbg('%d bytes written to stdin', written)
                 self.stdin_data = self.stdin_data[written:]
             except IOError, exc:
                 if exc.errno != errno.EAGAIN:
@@ -373,7 +450,8 @@ class CmdPipeline(Cmd):
     def __or__(self, other):
         if not isinstance(other, Cmd):
             raise TypeError("Can't pipe to %s" % other)
-        return CmdPipeline(self.commands[:] + [other], self.popen_kwargs)
+        return CmdPipeline(*(self.commands[:] + (other,)),
+            **self.popen_kwargs)
 
     def __str__(self):
         return '(%s)' % ' | '.join(map(str, self.commands))
@@ -389,7 +467,7 @@ def env_plus(**kwargs):
     return dict(os.environ, **kwargs)
 
 def _main():
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
     #logging.getLogger('wmpy._io.Poller').setLevel(logging.INFO)
     # do some tests and exit
     def do_run(cmd, stdin_data=''):
@@ -402,16 +480,23 @@ def _main():
                 returncode = [p.returncode for p in exc.proc.procs]
             else:
                 returncode = exc.proc.returncode
-            print "%s XX %s => %s" % (desc, returncode, exc.stdout)
+            print "%s exit %s => out=%r err=%r" % (cmd._logging_desc, returncode, exc.stdout, exc.stderr)
 
     say_hello = Cmd('echo', 'hello')
     cat = Cmd('cat')
     wc_l = Cmd('wc', '-l')
+    tee = Cmd('tee', '/dev/fd/2')
+    errtest = Cmd('echo bleh; echo argh 1>&2; exit 42', shell=True)
+    errtest2 = Cmd('cat; echo argh 1>&2; exit 42', shell=True)
 
     do_run(say_hello)
     do_run(CmdPipeline(say_hello))
-    do_run(say_hello | cat)
-    do_run(cat, 'hello')
-    do_run(say_hello | wc_l)
-    do_run(cat | wc_l, '1\n2\n3\n')
+    do_run(tee, 'test\n')
+    do_run(CmdPipeline(tee), 'test\n')
+    do_run(say_hello | tee)
+    do_run(cat | say_hello)
+    do_run(say_hello | cat | wc_l)
+    do_run(tee|cat|cat|cat|cat|cat|tee|cat|cat|cat|wc_l, 'whee\n')
+    do_run(errtest.update(stderr=sp.PIPE))
+    do_run((say_hello|errtest2).update(stderr=sp.PIPE))
 
