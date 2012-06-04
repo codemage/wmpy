@@ -1,4 +1,5 @@
-from collections import namedtuple
+from __future__ import absolute_import
+
 from fcntl import fcntl, F_SETFL, F_GETFL
 import io
 import os
@@ -7,21 +8,25 @@ import select
 from . import _logging
 _logger, _dbg, _warn, _error = _logging.get_logging_shortcuts(__name__)
 
-class ClosingContextMixin(object):
+class ClosingContextMixin(_logging.InstanceLoggingMixin,
+                          object):
     """ Mixin for objects that just want close() on __exit__ """
     __slots__ = []
     def __enter__(self):
         return self
 
     def __exit__(self, *exc_info):
+        # self._dbg('%x.__exit__ => close()', id(self))
         self.close()
 
-class Pipe(namedtuple('_Pipe', 'r w'), ClosingContextMixin):
+class Pipe(ClosingContextMixin,
+           # _logging.InstanceLoggingMixin,
+           object):
     """ Context manager that wraps `os.pipe()`, yielding the read and
         write sides of the pipe after wrapping them with io.open;
         ensures that both ends are closed on exit from the with block.
     """
-    __slots__ = []
+    __slots__ = ()
     def __new__(cls, r_bufsize=0, w_bufsize=0):
         rfd, wfd = os.pipe()
         super(Pipe, cls).__new__(cls,
@@ -30,41 +35,62 @@ class Pipe(namedtuple('_Pipe', 'r w'), ClosingContextMixin):
 
     if False: # for linter
         def __init__(self, r, w):
-            ClosingContextMixin.__init__(self)
+            super(Pipe, self).__init__()
             self.r = r
             self.w = w
 
     def close(self):
-        self.r.close()
-        self.w.close()
+        if not self.r.closed:
+            self.r.close()
+        if not self.w.closed:
+            self.w.close()
 
-class Poller(ClosingContextMixin, object):
+class Poller(ClosingContextMixin,
+             _logging.InstanceLoggingMixin,
+             object):
     """ Simple callback-based wrapper around select.poll()
     """
     IN = select.POLLIN | select.POLLPRI
     OUT = select.POLLOUT
     ERR = select.POLLERR
+
     def __init__(self):
-        ClosingContextMixin.__init__(self)
+        super(Poller, self).__init__()
         self._poll = select.poll()
         self._handlers = {}
     def register(self, fd, events, handler):
+        if not isinstance(fd, int):
+            fd = fd.fileno()
         make_nonblocking(fd)
         self._handlers[fd] = handler
         self._poll.register(fd, events)
     def unregister(self, fd):
+        if not isinstance(fd, int):
+            fd = fd.fileno()
+        if fd not in self._handlers:
+            raise ValueError('fd not registered')
         del self._handlers[fd]
         self._poll.unregister(fd)
     def close(self):
+        if not hasattr(self, '_poll'):
+            return
         for fd in self._handlers:
             self._poll.unregister(fd)
         # poll() objects aren't actually close()-able
         del self._poll
     def poll(self, *args):
         empty = True
-        for fd, event in self._poll.poll(*args):
+        self._dbg('enter poll()')
+        events = self._poll.poll(*args)
+        self._dbg('poll() events => %r fds = %r', events, self._handlers)
+        fds = self._handlers.keys()
+        self._dbg('select(%s) => %s', str(fds), select.select(fds, fds, fds, 0))
+        for fd, event in events:
             empty = False
+            self._dbg('poll() enter handler[%d] event=%d', fd, event)
             self._handlers[fd](fd, event)
+            self._dbg('poll() exit handler[%d] event=%d', fd, event)
+        self._dbg('exit poll()')
         return empty
 
 def make_nonblocking(fd):

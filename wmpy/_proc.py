@@ -1,11 +1,56 @@
 """ wmpy._proc -- tools for dealing with subprocesses """
-from collections import namedtuple
-import os
+from __future__ import absolute_import
+
+import os, os.path
+import sys
+
+def _generic_main_boilerplate(module_globals, expected_package, module_name):
+    # This is standard boilerplate for modules that are loaded as part of a
+    # package and want to have a _main() function, and who want their _main
+    # to run in the context of the version of the module attached to the
+    # package.  Since the whole point is to get to a sane import/sys.path
+    # state, it can't be extracted into an importable function without
+    # introducing a dependcency on the module it's defined in being installed
+    # system-wide.
+    #
+    # This avoids the issue where there are two parallel copies of the module,
+    # one called __main__ and one by its normal name, with different versions
+    # of all of the types and module-level state and constants.
+    #
+    # Modules using this boilerplace can be run via python -m 'pkg.mod', python
+    # pkg/mod.py or even 'cd pkg; python mod.py' and will work regardless.
+    #
+    # It's written so that if I ever to decide to just stick it in a module in
+    # the system path, it can be imported and called and still work.
+    if module_globals['__name__'] != '__main__':
+        return
+
+    if module_globals.get('__package__') is None:
+        module_globals['__package__'] = expected_package
+    package = module_globals['__package__']
+    full_name = '%s.%s' % (package, module_name)
+
+    if os.path.abspath(os.path.dirname(__file__)) == \
+       os.path.abspath(sys.path[0]):
+        # python pkg/mod.py mucks up the path, fix it:
+        sys.path[0] += '/..' * len(package.split('.'))
+
+    __import__(full_name, globals(), locals(), None, 0)
+    sys.modules[full_name]._main() # pylint: disable=W0212
+    sys.exit(0)
+
+_generic_main_boilerplate(globals(), 'wmpy', '_proc')
+ 
+# annoying boilerplate is done, back to our regularly scheduled programming:
+import errno
+import logging
+import pipes
 import select
 import subprocess as sp
 
-from . import _io as wmio
+from . import _io
 from . import _logging
+
 _logger, _dbg, _warn, _error = _logging.get_logging_shortcuts(__name__)
 
 class CmdException(Exception):
@@ -16,8 +61,7 @@ class CmdException(Exception):
         self.returncode = self.proc.returncode
         super(Exception, self).__init__(*args, **kwargs)
 
-_CmdBase = namedtuple('_CmdBase', 'argv popen_kwargs')
-class Cmd(_CmdBase):
+class Cmd(_logging.InstanceLoggingMixin):
     """ Represents a runnable command.
     
         This is basically a stored set of parameters for subprocess.Popen.
@@ -30,43 +74,54 @@ class Cmd(_CmdBase):
         output and prints the stderr, or (for nonzero return codes) throws a
         CmdException with both attached.
     """
-    __slots__ = ()
-    def __new__(cls, *argv, **popen_kwargs):
-        return _CmdBase.__new__(cls, argv, popen_kwargs)
-    
-    if False:
-        def __init__(self, argv, popen_kwargs): # for linter
-            self.argv = argv
-            self.popen_kwargs = popen_kwargs
+    __slots__ = ('argv', 'popen_kwargs')
+    def __init__(self, *argv, **popen_kwargs):
+        super(Cmd, self).__init__()
+        self.argv = argv
+        self.popen_kwargs = popen_kwargs
+        kw = popen_kwargs.copy()
+        for k in kw:
+            try:
+                kw[k] = kw[k].fileno()
+            except:
+                pass
+        self._dbg('init %s', kw)
 
     def update(self, **popen_kwargs):
-        """ Returns a new Cmd with the Popen keywords specified
+        """ Returns copy of self with the Popen keywords specified
             updated, with the previous settings operating as defaults.
         """
-        return Cmd(self.argv,
+        return type(self)(*self.argv,
             **dict(self.popen_kwargs, **popen_kwargs))
 
+    def default(self, **popen_default_kwargs):
+        """ As for update(), but will not change existing keys. """
+        return type(self)(*self.argv,
+            **dict(popen_default_kwargs, **self.popen_kwargs))
+
     def append(self, *extra_argv):
-        """ Returns a new Cmd with added arguments. """
-        return Cmd(self.argv+extra_argv, self.popen_kwargs)
+        """ Returns a copy of self with added arguments. """
+        return type(self)(tuple(self.argv+extra_argv), self.popen_kwargs)
 
     def _popen(self, _popen_kw):
         if _popen_kw.get('shell'):
             # shell=True -> should be a single cmd, join args:
             # don't escape, we want to allow shell metacharacters if we are
             # doing this at all
-            return sp.Popen(self.argv.join(' '), **_popen_kw)
+            argv = self.argv.join(' ')
         else:
-            return sp.Popen(self.argv, **_popen_kw)
+            argv = self.argv
+        return sp.Popen(argv, **_popen_kw)
 
     def popen(self):
-        _dbg("%r.proc()", self)
+        """ Returns a Popen instance instantiated based on my settings. """
+        self._dbg("popen()")
         return self._popen(self.popen_kwargs)
 
     def run(self, stdin_data=''):
-        _dbg("%r.run(<%d bytes>)", self, len(stdin_data))
         kwargs_with_pipe = dict({'stdin': sp.PIPE, 'stdout': sp.PIPE},
             **self.popen_kwargs)
+        self._dbg("run(<%d bytes>) %r", len(stdin_data), kwargs_with_pipe)
         proc = self._popen(kwargs_with_pipe)
         stdout, stderr = proc.communicate(stdin_data)
         if proc.returncode != 0:
@@ -84,14 +139,20 @@ class Cmd(_CmdBase):
         raise TypeError("can't pipe to {} from {}".format(
             repr(other), self))
 
+    @property
+    def _logging_desc(self):
+        return ' '.join(map(pipes.quote, self.argv))
+
     def __str__(self):
-        return "%s(%s)" % (type(self).__name__, ' '.join(self.argv))
+        return "%s(%s)" % (type(self).__name__, self._logging_desc)
 
     def __repr__(self):
         return "%s(*%r, **%r)" % (type(self).__name__,
             self.argv, self.popen_kwargs)
 
-class PopenPipeline(wmio.ClosingContextMixin, object):
+class PopenPipeline(_io.ClosingContextMixin,
+                    _logging.InstanceLoggingMixin,
+                    object):
     """ More or less like a Popen instance on a shell-style pipeline of
         commands.  Unix only.  Construct with any number of Cmd instances as
         positional parameters; these represents the commands to be run.
@@ -100,10 +161,7 @@ class PopenPipeline(wmio.ClosingContextMixin, object):
         pipeline as a whole; `stdin` feeds the first command, `stdout` comes
         from the last, and all `stderr` streams are merged into the stderr
         handle.  Intermediate processes' stdin and stdout streams are paired
-        vit pipes internally.  All three default to `subprocess.PIPE`,
-        resulting in attributes on the instance with file-like objects for
-        accessing them.  `None` can be passed explicitly to request that a
-        stream be inherited from the Python process.
+        vit pipes internally.
 
         Any additional keyword parameters are passed to every `Popen` instance
         used to construct the pipeline.
@@ -127,17 +185,20 @@ class PopenPipeline(wmio.ClosingContextMixin, object):
     """
     def __init__(self, first_cmd, *remaining_cmds, **kw):
         # keyword-only parameters for stream redirection:
-        stdin = kw.pop('stdin', sp.PIPE)
-        stdout = kw.pop('stdout', sp.PIPE)
-        stderr = kw.pop('stderr', sp.PIPE)
+        stdin = kw.pop('stdin', None)
+        stdout = kw.pop('stdout', None)
+        stderr = kw.pop('stderr', None)
 
-        wmio.ClosingContextMixin.__init__(self)
+        super(PopenPipeline, self).__init__()
+        if kw.pop('_first', True):
+            self._dbg('init(%r, %r, %r)', first_cmd, remaining_cmds, kw)
 
-        self.proc = first_cmd.update(
+        self.cmd = first_cmd.default(close_fds=True).update(
             stdin=stdin,
             stdout=sp.PIPE if len(remaining_cmds) > 0 else stdout,
             stderr=stderr,
-            **kw).popen()
+            **kw)
+        self.proc = self.cmd.popen()
         self.stdin = self.proc.stdin
         if stderr == sp.PIPE:
             # we want to have one stderr pipe for the whole pipeline, so
@@ -150,14 +211,18 @@ class PopenPipeline(wmio.ClosingContextMixin, object):
             # propagated back up as the whole pipeline's stdout:
             self.next = None
             self.stdout = self.proc.stdout
+            self._dbg('->popen %x => pipeline_stdout %s', id(self.cmd), self.stdout.fileno())
         else:
+            self._dbg('->popen %x => next_stdout %s', id(self.cmd), self.proc.stdout.fileno())
             self.next = type(self)(  # build another instance of same type:
                     stdin=self.proc.stdout,
                     stdout=stdout, stderr=stderr,
+                    _first=False,
                     *remaining_cmds, **kw)
-            # out stdout was made into the next cmd's stdin, close it here:
+            # self.proc's stdout was made into the next cmd's stdin, close it:
             self.proc.stdout.close()
             # our "stdout" should come from the end of the pipeline:
+            self.stdout = self.next.stdout
         
         self._communicate_called = False
         self._poller = None
@@ -173,7 +238,6 @@ class PopenPipeline(wmio.ClosingContextMixin, object):
         while cur is not None:
             yield cur.proc
             cur = cur.next
-            self.stdout = self.next.stdout
 
     @property
     def returncode(self):
@@ -199,6 +263,8 @@ class PopenPipeline(wmio.ClosingContextMixin, object):
         for item in (self.proc.stdin, self.proc.stdout,
                      self.stderr, self._poller, self.next):
             if item is not None:
+                if hasattr(item, 'closed') and item.closed:
+                    continue
                 item.close()
 
     def _comm_setup_poller(self, stdin_data, poller=None):
@@ -206,37 +272,53 @@ class PopenPipeline(wmio.ClosingContextMixin, object):
             raise ValueError(">1 call to PopenPipeline.communicate()")
         self._communicate_called = True
 
-        self.stdin_data = memoryview(stdin_data)
+        if stdin_data:
+            self.stdin_data = memoryview(stdin_data)
+            self._dbg('got stdin data, writing to %s', self.stdin.fileno())
+        elif self.stdin:
+            self._dbg('no stdin data, closing %s', self.stdin.fileno())
+            self.stdin.close()
+            self.stdin = None
+        else:
+            self._dbg('neither stdin_data nor stdin present')
+
         self.stdout_data = []
         self.stderr_data = []
 
         self._open_pipes = 0
         if poller is None:
-            poller = self._poller = wmio.Poller()
+            poller = self._poller = _io.Poller()
 
-        def _register(fp, ev, cb):
-            if fp:
-                wmio.make_nonblocking(fp)
-                poller.register(fp, ev, cb)
-                self._open_pipes += 1
-
-        _register(self.stdin, poller.IN, self.send_stdin)
-        _register(self.stdout, poller.OUT,
-            self.read_cb(self.stdout, self.stdout_data))
-        _register(self.stderr, poller.OUT,
-            self.read_cb(self.stderr, self.stderr_data))
-        def _close_pipe(self, fp):
+        def _close_pipe(fp):
+            desc = 'stdin' if fp is self.stdin else (
+                   'stdout' if fp is self.stdout else 'stderr')
+            self._dbg("closing %s fd %d", desc, fp.fileno())
             poller.unregister(fp)
             fp.close()
             self._open_pipes -= 1
         self._close_pipe = _close_pipe
+
+        def _register(_desc, fp, ev, cb):
+            if fp:
+                _io.make_nonblocking(fp)
+                poller.register(fp, ev, cb)
+                self._open_pipes += 1
+
+        _register('stdin', self.stdin, poller.IN, self.send_stdin)
+        _register('stdout', self.stdout, poller.OUT,
+            self.read_cb(self.stdout, self.stdout_data))
+        _register('stderr', self.stderr, poller.OUT,
+            self.read_cb(self.stderr, self.stderr_data))
         
         return poller
 
     def communicate(self, stdin_data=''):
         with self, self._comm_setup_poller(stdin_data) as poller:
-            while self._open_pipes > 0 and self.poll() is None:
-                poller.poll(250)
+            while self._open_pipes > 0 or self.poll() is None:
+                self._dbg('poll: %s %s', self._open_pipes, self.poll())
+                if self.stdin_data:
+                    self.send_stdin(self.stdin.fileno(), poller.OUT)
+                poller.poll(1000)
         # self.close() called implicitly from with block
 
         self.stdout_data = ''.join(self.stdout_data)
@@ -248,45 +330,88 @@ class PopenPipeline(wmio.ClosingContextMixin, object):
         return self
 
     def send_stdin(self, fd, event):
-        if event & wmio.Poller.ERR:
-            if not self.stdin_data:
+        if event & _io.Poller.ERR:
+            if not self.stdin_data: 
+                # we were done anyway, never mind
                 self._close_pipe(self.stdin)
+                return
             # else we will probably raise an IOError shortly...
             # (this is what we want to do anyway)
-        elif not (event & wmio.Poller.OUT):
+        elif not (event & _io.Poller.OUT):
             raise Exception("unknown event %x on %d", event, fd)
             
         if self.stdin_data:
-            written = os.write(fd, self.stdin_data[:select.PIPE_BUF])
-            self.stdin_data = self.stdin_data[written:]
+            try:
+                written = os.write(fd, self.stdin_data[:select.PIPE_BUF])
+                self._dbg('%d bytes written to stdin', written)
+                self.stdin_data = self.stdin_data[written:]
+            except IOError, exc:
+                if exc.errno != errno.EAGAIN:
+                    raise
 
         if not self.stdin_data:
             self._close_pipe(self.stdin)
 
     def read_cb(self, fp, read_data_list):
-        def do_read(self, fd, _event):
+        def do_read(fd, _event):
             data = os.read(fd, 512)
             if len(data) == 0:
                 self._close_pipe(fp)
             else:
                 read_data_list.append(data)
+        do_read.func_name = 'read_stderr' if fp is self.stderr else 'read_stdout'
         return do_read
 
 class CmdPipeline(Cmd):
+    @property
+    def commands(self):
+        return self.argv
+
     def _popen(self, pipeline_kw):
-        return PopenPipeline(*self.argv, **pipeline_kw)
+        return PopenPipeline(*self.commands, **pipeline_kw)
 
     def __or__(self, other):
         if not isinstance(other, Cmd):
             raise TypeError("Can't pipe to %s" % other)
-        return CmdPipeline(self.argv[:] + [other], self.popen_kwargs)
+        return CmdPipeline(self.commands[:] + [other], self.popen_kwargs)
 
     def __str__(self):
-        return '(%s)' % ' | '.join(map(str, self.argv))
+        return '(%s)' % ' | '.join(map(str, self.commands))
+
+    @property
+    def _logging_desc(self):
+        return ' | '.join(cmd._logging_desc for cmd in self.commands)
 
 def env_plus(**kwargs):
     """ Returns the environment variable map, with updated
         settings from the keyword args.
     """
     return dict(os.environ, **kwargs)
+
+def _main():
+    logging.basicConfig(level=logging.DEBUG)
+    #logging.getLogger('wmpy._io.Poller').setLevel(logging.INFO)
+    # do some tests and exit
+    def do_run(cmd, stdin_data=''):
+        #pipeline = pipeline.update(stderr=sp.PIPE)
+        try:
+            cmd_output = cmd.run(stdin_data)
+            print "%r => %s => %r" % (stdin_data, cmd._logging_desc, cmd_output)
+        except CmdException, exc:
+            if isinstance(cmd, CmdPipeline):
+                returncode = [p.returncode for p in exc.proc.procs]
+            else:
+                returncode = exc.proc.returncode
+            print "%s XX %s => %s" % (desc, returncode, exc.stdout)
+
+    say_hello = Cmd('echo', 'hello')
+    cat = Cmd('cat')
+    wc_l = Cmd('wc', '-l')
+
+    do_run(say_hello)
+    do_run(CmdPipeline(say_hello))
+    do_run(say_hello | cat)
+    do_run(cat, 'hello')
+    do_run(say_hello | wc_l)
+    do_run(cat | wc_l, '1\n2\n3\n')
 

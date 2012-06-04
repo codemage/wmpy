@@ -2,6 +2,8 @@
 
 Copyright (c) 2012 Walter Mundt; see LICENSE file for details.
 """
+from __future__ import absolute_import
+
 _VERSION = (0, 0, 1)
 
 from ._logging import *
