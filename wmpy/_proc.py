@@ -17,7 +17,7 @@ def _generic_main_boilerplate(module_globals, expected_package, module_name):
     # one called __main__ and one by its normal name, with different versions
     # of all of the types and module-level state and constants.
     #
-    # Modules using this boilerplace can be run via python -m 'pkg.mod', python
+    # Modules using this boilerplate can be run via python -m 'pkg.mod', python
     # pkg/mod.py or even 'cd pkg; python mod.py' and will work regardless.
     #
     # It's written so that if I ever to decide to just stick it in a module in
@@ -79,13 +79,6 @@ class Cmd(_logging.InstanceLoggingMixin):
         super(Cmd, self).__init__()
         self.argv = argv
         self.popen_kwargs = popen_kwargs
-        kw = popen_kwargs.copy()
-        for k in kw:
-            try:
-                kw[k] = kw[k].fileno()
-            except:
-                pass
-        #self._dbg('init %s', kw)
 
     def update(self, **popen_kwargs):
         """ Returns copy of self with the Popen keywords specified
@@ -183,7 +176,7 @@ class PopenPipeline(_io.ClosingContextMixin,
                     object):
     """ More or less like a Popen instance on a shell-style pipeline of
         commands.  Unix only.  Construct with any number of Cmd instances as
-        positional parameters; these represents the commands to be run.
+        positional parameters; these represent the commands to be run.
 
         The `stdin`, `stdout`, and `stderr` keyword parameters operate on the
         pipeline as a whole; `stdin` feeds the first command, `stdout` comes
