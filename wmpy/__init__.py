@@ -8,7 +8,9 @@ _VERSION = (0, 0, 1)
 
 from ._logging import *
 from ._io import *
+from ._introspect import *
 from ._proc import *
+from ._threading import *
 
 _logger, _dbg, _warn, _error = get_logging_shortcuts(__name__)
 
