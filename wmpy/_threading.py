@@ -4,7 +4,7 @@ import threading
 import time
 
 from . import _logging
-_logger, _dbg, _warn, _error = _logging.get_logging_shortcuts(__name__)
+_logger, _dbg, _info, _warn = _logging.get_logging_shortcuts(__name__)
 
 class WatchedThread(threading.Thread):
     """ Thread that calls fail_cb in the thread's context on uncaught

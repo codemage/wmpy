@@ -51,7 +51,7 @@ import subprocess as sp
 from . import _io
 from . import _logging
 
-_logger, _dbg, _warn, _error = _logging.get_logging_shortcuts(__name__)
+_logger, _dbg, _info, _warn = _logging.get_logging_shortcuts(__name__)
 
 class CmdException(Exception):
     def __init__(self, proc, stdout, stderr, *args, **kwargs):

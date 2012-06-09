@@ -6,7 +6,7 @@ import os
 import select
 
 from . import _logging
-_logger, _dbg, _warn, _error = _logging.get_logging_shortcuts(__name__)
+_logger, _dbg, _info, _warn = _logging.get_logging_shortcuts(__name__)
 
 class ClosingContextMixin(_logging.InstanceLoggingMixin,
                           object):

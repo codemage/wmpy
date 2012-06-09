@@ -18,7 +18,7 @@ def get_logging_shortcuts(name):
         and error methods.
     """
     logger = logging.getLogger(name)
-    return logger, logger.debug, logger.warning, logger.error
+    return logger, logger.debug, logger.info, logger.warning
 
 class _InstanceLoggerAdapter(logging.LoggerAdapter):
     def process(self, msg, kwargs):
