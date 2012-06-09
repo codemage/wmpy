@@ -191,7 +191,7 @@ class ParserGenerator(object):
         func.args = {}
         func.required_args = set()
         func.unparsed_args = set()
-        for arg in argspec.args:
+        for arg in argspec.positionals:
             if arg in ignore:
                 if arg not in arguments:
                     func.unparsed_args.add(arg)
@@ -206,13 +206,14 @@ class ParserGenerator(object):
             elif arg not in arguments:
                 _dbg("%s: defaulting %s to positional",
                     func.__name__, arg)
-                arguments[arg] = {
-                    'nargs': '?' if arg in argspec.defaults else None}
+		if arg == argspec.varargs:
+		    nargs = '*'
+		elif arg in argspec.defaults:
+		    nargs = '?'
+		else:
+		    nargs = None
+                arguments[arg] = {'nargs': nargs}
         
-        if argspec.varargs is not None:
-            arguments.setdefault(argspec.varargs, {})
-            arguments[argspec.varargs].setdefault('nargs', '*')
-
         # now that we have the arguments dict all filled in,
         # build a parser out of it
         parser = self.build_parser(argspec, arguments)
