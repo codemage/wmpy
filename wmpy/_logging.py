@@ -124,6 +124,10 @@ class InstanceLoggingMixin(object):
         self_or_cls._logger.debug(*arg, **kw)
 
     @automethod
+    def _info(self_or_cls, *arg, **kw):  # pylint: disable=E0213
+        self_or_cls._logger.info(*arg, **kw)
+
+    @automethod
     def _warn(self_or_cls, *arg, **kw):  # pylint: disable=E0213
         self_or_cls._logger.warning(*arg, **kw)
 
