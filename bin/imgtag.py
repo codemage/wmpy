@@ -483,9 +483,9 @@ def do_tag(db):
 	    continue
 	cmd, name, tag = line.strip().split()
 	if cmd == 'add':
-	    db.add_tag(name, tag)
+	    db.images[name].tags.append(tag)
 	elif cmd == 'remove':
-	    db.remove_tag(name, tag)
+	    db.images[name].tags.remove(tag)
 	else:
 	    raise ValueError('unknown command: ' + line.strip())
     db.save_dirty()
