@@ -34,11 +34,6 @@ import sys
 import threading
 import weakref
 
-import wmpy
-
-
-_logger, _dbg, _info, _warn = wmpy.get_logging_shortcuts(__name__)
-
 if __name__ == '__main__':
     if os.environ.get('IMGTAG_DEBUG', '') != '':
         logging.basicConfig(level=logging.DEBUG, stream=sys.stdout,
@@ -46,6 +41,10 @@ if __name__ == '__main__':
     else:
         logging.basicConfig(level=logging.INFO,
             format="%(levelname)s %(message)s")
+    sys.path[0] = p.join(sys.path[0], '..')
+
+import wmpy
+_logger, _dbg, _info, _warn = wmpy.get_logging_shortcuts(__name__)
 
 def _raise(exc):
     raise exc
