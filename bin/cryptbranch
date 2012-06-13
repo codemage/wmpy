@@ -1,0 +1,171 @@
+#!/usr/bin/env python
+
+import keyring
+import os, os.path
+import subprocess
+import sys
+
+if __name__ == '__main__':
+    sys.path[0] = os.path.join(sys.path[0], '..')
+
+from wmpy import Cmd, CmdException, ParserGenerator, env_plus
+
+gen_parser = ParserGenerator()
+
+def git(*args, **kwargs):
+    """ returns Cmd that runs git out of repodir """
+    kwargs['cwd'] = repodir
+    args = ['git'] + list(args)
+    return Cmd(*args, **kwargs)
+
+def parse_tree(tree):
+    """ generator yielding tree entries as tuples from a git branch """
+    for entry in tree.split('\0'):
+        if len(entry) == 0:
+            continue
+        mode, objtype, info = entry.split(' ', 2)
+        sha, path = info.split('\t', 1)
+        yield (mode, objtype, sha, path)
+    
+def lstree(branch):
+    """ runs ls-tree -r and returns parse_tree gen of result """
+    tree = git('ls-tree', '-r', '-z', branch).run()
+    return parse_tree(tree)
+
+def encrypt():
+    """ openssl Cmd for encryption """
+    return Cmd('openssl',
+               'enc','-base64','-aes-256-cbc',
+                     '-S',salt,'-k',password)
+
+def decrypt():
+    """ openssl Cmd for decryption """
+    return Cmd('openssl',
+               'enc', '-d',
+               '-base64', '-aes-256-cbc',
+               '-k', password)
+
+def encryptbranch(clearbranch, cipherbranch):
+    """ encrypts a branch in git, creating a new commit on another branch
+        that represents it in a more-or-less opaque form.  Only number
+        of files and approximate distribution of file sizes will be
+        apparent from looking at the cipherbranch without the key."""
+    enc_tree_outer = []
+    enc_tree_inner = []
+    seen_blobs = set()
+    for mode, objtype, sha, path in lstree(clearbranch):
+        if objtype != 'blob':
+            raise Exception("Can't deal with object of type " +
+                            objtype + " in repo")
+        enc_sha = (git('cat-file', 'blob', sha) |
+                   encrypt() |
+                   git('hash-object', '-w', '--stdin')).run().strip()
+        enc_tree_inner.append('%s blob %s\t%s\0' % (mode, enc_sha, path))
+        if enc_sha not in seen_blobs:
+            enc_tree_outer.append('100644 blob %s\t%s\0' % (enc_sha, enc_sha))
+            seen_blobs.add(enc_sha)
+
+    enc_tree_inner = ''.join(enc_tree_inner)
+    inner_tree_sha = git('hash-object', '-w', '--stdin').run(enc_tree_inner).strip()
+
+    enc_tree_outer.append('100644 blob %s\ttree\0' % inner_tree_sha)
+    enc_tree_outer = ''.join(enc_tree_outer)
+    outer_tree_sha = git('mktree', '-z').run(enc_tree_outer).strip()
+    
+    cipherbranch = 'refs/heads/'+cipherbranch
+    cipher_parent = []
+    try:
+        parent_commit_sha = git('rev-list', '-n', '1', cipherbranch,
+            stderr=subprocess.PIPE).run().strip()
+        cipher_parent = ['-p', parent_commit_sha]
+    except CmdException:
+        pass
+
+    # print this info:
+    # sha,parent_sha,author_name,author_email,author_date, \
+    #        committer_name,committer_email,committer_date, \
+    #        commit_msg = orig_commit_info.split('\0')
+    enc_commit_info = (git('log', '-n1',
+            '--pretty=format:%H%x00%P%x00%an%x00%ae%x00%aD%x00%cn%x00%ce%x00%cD%x00%B',
+            clearbranch) | encrypt()).run()
+    enc_message = 'cryptbranch\n\n'
+    enc_message += enc_commit_info
+    enc_commit_sha = git('commit-tree', outer_tree_sha, *cipher_parent).run(enc_message).strip()
+    git('update-ref','-m','cryptbranch',cipherbranch,enc_commit_sha,*cipher_parent[1:]).run()
+
+def mktree_recursive(tree):
+    """ takes flat list of (mode, sha, path) tuples and returns tree sha """
+    local_tree = []
+    subtrees = {}
+    for mode, sha, path in tree:
+        if '/' in path:
+            head, tail = path.split('/', 1)
+            subtrees.setdefault(head, []).append( (mode, sha, tail) )
+        else:
+            local_tree.append('%s blob %s\t%s\0' % (mode, sha, path))
+    for head, subtree in subtrees.iteritems():
+        sub_sha = mktree_recursive(subtree)
+        local_tree.append('040000 tree %s\t%s\0' % (sub_sha, head))
+    local_tree = ''.join(local_tree)
+    return git('mktree', '-z').run(local_tree).strip()
+
+def decryptbranch(cipherbranch, clearbranch):
+    orig_commit_info = (git('log', '-n1', '--pretty=format:%b', cipherbranch) |
+                        decrypt()).run()
+
+    orig_sha,parent_sha,author_name,author_email,author_date, \
+            committer_name,committer_email,committer_date, \
+            commit_msg = orig_commit_info.split('\0')
+
+    dec_tree_inner = git('cat-file', 'blob', '%s:tree' % cipherbranch).run()
+    out_tree = []
+    for mode, objtype, sha, path in parse_tree(dec_tree_inner):
+        dec_sha = (git('cat-file', 'blob', sha) |
+                   decrypt() |
+                   git('hash-object', '-w', '--stdin')).run().strip()
+        out_tree.append((mode, dec_sha, path))
+
+    out_tree_sha = mktree_recursive(out_tree)
+
+    parents = []
+    if parent_sha:
+        # TODO: find out how merge commit parents are represented in %P
+        parents = ['-p', parent_sha]
+    commit_env = env_plus(GIT_AUTHOR_NAME=author_name,
+                          GIT_AUTHOR_EMAIL=author_email,
+                          GIT_AUTHOR_DATE=author_date,
+                          GIT_COMMITTER_NAME=committer_name,
+                          GIT_COMMITTER_EMAIL=committer_email,
+                          GIT_COMMITTER_DATE=committer_date)
+    out_commit_sha = git('commit-tree',out_tree_sha,*parents,env=commit_env).run(commit_msg).strip()
+    if out_commit_sha != orig_sha:
+        print "Warning: original commit %s decrypted to %s" % (orig_sha, out_commit_sha)
+    git('update-ref','-m','decryptbranch','refs/heads/'+clearbranch,out_commit_sha).run()
+
+def load_password():
+    global salt, password
+    info = keyring.get_password('homesync', os.environ['USER'])
+    salt = info[:16]
+    password = info[16:]
+
+@gen_parser(
+        action=dict(nargs=None, choices=('encrypt', 'decrypt'),
+                    metavar='{encrypt|decrypt}'),
+        clearbranch=dict(short='o', metavar='<commit-ish>'),
+        cipherbranch=dict(short='x', metavar='<branch>'),
+        repo=dict(help='git repository to work on'),
+        )
+def main(action, clearbranch='clear', cipherbranch='crypt', repo='.'):
+    """ encrypt or decrypt a git branch, producing or updating another git branch """
+    global repodir
+    repodir = repo
+
+    load_password()
+    if action == 'encrypt':
+        encryptbranch(clearbranch, cipherbranch)
+    else:
+        decryptbranch(cipherbranch, clearbranch)
+
+if __name__ == '__main__':
+    main.parse_and_call(sys.argv[1:])
+
