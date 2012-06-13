@@ -4,9 +4,8 @@ import inspect
 import logging
 import types
 import sys
-import weakref as weak
 
-def _patched_findCaller(logger):
+def _patched_findCaller(_logger):
     for frame in inspect.stack():
         if 'logging' not in frame[1]:
             return frame[1:4]
@@ -60,11 +59,10 @@ class _InstanceLoggerDescriptor(object):
             return getattr(instance, self.INSTANCE_LOGGER_KEY)
 
         parent_logger = self._get_class_logger(cls)
-        if type(instance).__name__.startswith('Cmd'):
-            instance._logging_desc
-        if hasattr(instance, '_logging_desc') and \
-           getattr(instance, '_logging_desc') is not getattr(cls, '_logging_desc', None):
-            instance_desc = '<%s>' % instance._logging_desc
+        class_desc = getattr(cls, '_logging_desc', None)
+        instance_desc = getattr(cls, '_logging_desc', class_desc)
+        if instance_desc is not class_desc:
+            instance_desc = '<%s>' % instance_desc
         else:
             instance_desc = '@%x' % id(instance)
         instance_desc += '.%d' % (self.num_created,)

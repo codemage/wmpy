@@ -1,52 +1,21 @@
 """ wmpy._proc -- tools for dealing with subprocesses """
 from __future__ import absolute_import
 
-import os, os.path
-import sys
-
-def _generic_main_boilerplate(module_globals, expected_package, module_name):
-    # This is standard boilerplate for modules that are loaded as part of a
-    # package and want to have a _main() function, and who want their _main
-    # to run in the context of the version of the module attached to the
-    # package.  Since the whole point is to get to a sane import/sys.path
-    # state, it can't be extracted into an importable function without
-    # introducing a dependcency on the module it's defined in being installed
-    # system-wide.
-    #
-    # This avoids the issue where there are two parallel copies of the module,
-    # one called __main__ and one by its normal name, with different versions
-    # of all of the types and module-level state and constants.
-    #
-    # Modules using this boilerplate can be run via python -m 'pkg.mod', python
-    # pkg/mod.py or even 'cd pkg; python mod.py' and will work regardless.
-    #
-    # It's written so that if I ever to decide to just stick it in a module in
-    # the system path, it can be imported and called and still work.
-    if module_globals['__name__'] != '__main__':
-        return
-
-    if module_globals.get('__package__') is None:
-        module_globals['__package__'] = expected_package
-    package = module_globals['__package__']
-    full_name = '%s.%s' % (package, module_name)
-
-    if os.path.abspath(os.path.dirname(__file__)) == \
-       os.path.abspath(sys.path[0]):
-        # python pkg/mod.py mucks up the path, fix it:
-        sys.path[0] += '/..' * len(package.split('.'))
-
-    __import__(full_name, globals(), locals(), None, 0)
-    sys.modules[full_name]._main() # pylint: disable=W0212
-    sys.exit(0)
-
-_generic_main_boilerplate(globals(), 'wmpy', '_proc')
- 
-# annoying boilerplate is done, back to our regularly scheduled programming:
 import errno
 import logging
+import os
 import pipes
 import select
 import subprocess as sp
+import sys
+
+if __name__ == '__main__':
+    if __package__ is None:
+        sys.stderr.write('run like this: python -m wmpy._proc\n')
+        sys.exit(1)
+    from wmpy import _proc
+    _proc._main()
+    sys.exit()
 
 from . import _io
 from . import _logging
@@ -165,7 +134,7 @@ class Cmd(_logging.InstanceLoggingMixin):
         return ' '.join(map(pipes.quote, self.argv))
 
     def __str__(self):
-        return "%s(%s)" % (type(self).__name__, self._logging_desc)
+        return self._logging_desc
 
     def __repr__(self):
         return "%s(*%r, **%r)" % (type(self).__name__,
@@ -247,23 +216,23 @@ class PopenPipeline(_io.ClosingContextMixin,
                     preexec_fn=self._preexec,
                     **kw))
                 self.procs.append(self.cmds[i].popen())
-                _fd = lambda fp: fp if isinstance(fp, int) else (fp.fileno() if fp and not fp.closed else '_')
-                p = self.procs[-1]
-                self._dbg('[%d]: in=%s out=%s err=%s', i, _fd(p.stdin), _fd(p.stdout), _fd(p.stderr))
                 if i > 0:
-                    # stdin is connected the previous command in the pipeline, we
-                    # don't want to hold on to it:
+                    # stdin is connected the previous command in the pipeline,
+                    # we don't want to hold on to it:
                     stdin.close()
                 if not is_last_cmd:
                     # next command's stdin should use our stdout:
                     stdin = self.procs[i].stdout
                 if i == 0:
                     if self.procs[0].stdin:
-                        self._dbg('adding stdin %s to parent fds:', self.procs[0].stdin.fileno())
+                        self._dbg('adding pipe stdin %s to parent fds:',
+                            self.procs[0].stdin.fileno())
                         self._parent_fds.append(self.procs[0].stdin.fileno())
-                    elif stdin not in (None, STDOUT):
-                        self._dbg('adding stdin %s to parent fds:', _fd(stdin))
-                        self._parent_fds.append(_fd(stdin))
+                    elif stdin not in (None, sp.STDOUT):
+                        if hasattr(stdin, 'fileno'):
+                            stdin = stdin.fileno()
+                        self._dbg('adding stdin %s to parent fds:', stdin)
+                        self._parent_fds.append(stdin)
         except BaseException:
             self.close(suppress_exc=True)
             raise
@@ -283,9 +252,7 @@ class PopenPipeline(_io.ClosingContextMixin,
 
     def _preexec(self):
         for fd in self._parent_fds:
-        #    sys.stderr.write('PID {0} preexec: closing {1}\n'.format(os.getpid(), fd))
             os.close(fd)
-        #os.system('exec 1>&2; echo Files for PID {0}:; ls -l /proc/{0}/fd'.format(os.getpid()))
         if self._orig_preexec_fn is not None:
             return self._orig_preexec_fn()
 
@@ -312,8 +279,7 @@ class PopenPipeline(_io.ClosingContextMixin,
     def wait(self):
         return tuple(p.wait() for p in self.procs)
 
-    @staticmethod
-    def _doclose(obj, suppress_exc):
+    def _doclose(self, obj, suppress_exc):
         if obj is None:
             return
         try:
@@ -378,14 +344,8 @@ class PopenPipeline(_io.ClosingContextMixin,
         return poller
 
     def communicate(self, stdin_data=''):
-        prev_codes = [None] * len(self.procs)
         with self, self._comm_setup_poller(stdin_data) as poller:
             while self._open_pipes > 0 or self.poll() is None:
-                codes = [p.poll() for p in self.procs]
-                for i, (prev, cur) in enumerate(zip(prev_codes, codes)):
-                    if cur is not None and prev is None:
-                        _dbg('[%d]: "%s" exited %s', i, self.cmds[i]._logging_desc, cur)
-                prev_codes = codes
                 if self.stdin_data:
                     self.send_stdin(self.stdin.fileno(), poller.OUT)
                 poller.poll(1000)
@@ -429,7 +389,8 @@ class PopenPipeline(_io.ClosingContextMixin,
                 self._close_pipe(fp)
             else:
                 read_data_list.append(data)
-        do_read.func_name = 'read_stderr' if fp is self.stderr else 'read_stdout'
+        do_read.func_name = 'read_stderr' if fp is self.stderr \
+                            else 'read_stdout'
         return do_read
 
 class CmdPipeline(Cmd):
@@ -451,7 +412,7 @@ class CmdPipeline(Cmd):
 
     @property
     def _logging_desc(self):
-        return ' | '.join(cmd._logging_desc for cmd in self.commands)
+        return ' | '.join(str(cmd) for cmd in self.commands)
 
 def env_plus(**kwargs):
     """ Returns the environment variable map, with updated
@@ -467,13 +428,14 @@ def _main():
         #pipeline = pipeline.update(stderr=sp.PIPE)
         try:
             cmd_output = cmd.run(stdin_data)
-            print "%r => %s => %r" % (stdin_data, cmd._logging_desc, cmd_output)
+            print "%r => %s => %r" % (stdin_data, cmd, cmd_output)
         except CmdException, exc:
             if isinstance(cmd, CmdPipeline):
                 returncode = [p.returncode for p in exc.proc.procs]
             else:
                 returncode = exc.proc.returncode
-            print "%s exit %s => out=%r err=%r" % (cmd._logging_desc, returncode, exc.stdout, exc.stderr)
+            print "%s exit %s => out=%r err=%r" % (cmd,
+                returncode, exc.stdout, exc.stderr)
 
     say_hello = Cmd('echo', 'hello')
     cat = Cmd('cat')
