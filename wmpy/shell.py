@@ -5,6 +5,8 @@ This is a prototype of a Unix-style shell in Python.
 
 It will not be sh-compatible.  It is designed for interactive
 use.
+
+Requires parcon (from PyPI) to work.
 """
 
 import os, os.path
@@ -51,14 +53,105 @@ import shlex
 
 from . import _proc, _io, _logging, VERSION
 
+import parcon
+from parcon import *
+
+def merge_strings(vals):
+    rv = [vals[0]]
+    for val in vals[1:]:
+        if isinstance(rv[-1], str) and isinstance(val, str):
+            rv[-1] += val
+        else:
+            rv.append(val)
+    if len(rv) == 1:
+        return rv[0]
+    return rv
+
+class ParseNode(object):
+    def __init__(self, val):
+        self.val = val
+    def __str__(self):
+        return repr(self)
+    def __repr__(self):
+        return '%s(%r)' % (type(self).__name__, self.val)
+
+class Var(ParseNode):
+    def __init__(self, val):
+        dollar, name = val
+        self.name = name
+    def __str__(self):
+        return '${%s}' % self.name
+    def __repr__(self):
+        return "Var(%s)" % self.name
+
+class ShellPyExpr(ParseNode):
+    def __init__(self, expr):
+        self.expr = expr
+    def __str__(self):
+        return '~{{%s}}' % self.expr
+    def __repr__(self):
+        return 'ShellPyExpr(%r)' % self.expr
+
+class Arg(ParseNode):
+    pass
+
+class JoinedArg(ParseNode):
+    pass
+
+def make_arg(val):
+    val = merge_strings(val)
+    if isinstance(val, str):
+        return Arg(val)
+    elif isinstance(val, list):
+        return ComplexArg(val)
+    else:
+        return val
+
+@apply
+def grammar():
+    L = Literal
+    SL = SignificantLiteral
+    ToStr = lambda p: Translate(p, ''.join)
+
+    MaybeBraced = lambda p: p | ("{" + p + "}")
+    VariableName = Word(alphanum_chars+'_.', init_chars=alpha_chars+'_')(
+        expected='variable name')
+    VariableRef = (SL('$') + MaybeBraced(VariableName))(    
+        expected='$VAR, ${VAR}')[
+        Var]
+
+    LongPythonExpr = Exact(OneOrMore(CharNotIn("}") | 
+        ToStr(SL("}") + CharNotIn("}"))))
+    ShortPythonExpr = Exact(+CharNotIn("}"))
+    ShortPythonArg = Exact("~{" + ShortPythonExpr + "}")
+    LongPythonArg = Exact("~{{" + LongPythonExpr + "}}")
+    PythonArg = ToStr(LongPythonArg | ShortPythonArg)(
+        expected='${python expr}, ${{python expr}}')[
+        ShellPyExpr]
+    SingleQuotedString = ToStr(Exact("'" + CharNotIn("'")[...] + "'"))(
+        expected="'quoted string'")
+    UnquotedArg = ToStr(+CharNotIn("' \t\n\r\\${}"))(
+        expected="unquoted_word")
+    ShellArg = Exact(OneOrMore(
+        PythonArg |
+        SingleQuotedString |
+        UnquotedArg |
+        VariableRef
+        ))[make_arg]
+    ShellLine = ShellArg[...] + End()
+    return locals()
+
 def _main():
     import readline
     print 'wmpy.shell %s.%s.%s' % VERSION
     while True:
         try:
             line = raw_input('wmpy.shell $ ')
+            parsed = grammar['ShellLine'].parse_string(line)
+            print ' '.join(map(str, parsed))
+        except parcon.ParseException as ex:
+            print ex
+            print
         except EOFError, KeyboardInterrupt:
             print
             return
-        print repr(shlex.split(line))
-
