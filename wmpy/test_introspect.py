@@ -3,9 +3,11 @@ import shlex
 import sys
 import unittest
 
+from . import _logging
 from . import _introspect as i
 
-class ArgSpecTests(unittest.TestCase):
+class ArgSpecTests(_logging.LogBufferMixin,
+                   unittest.TestCase):
     def assertSpecMatches(self, func,
         args, varargs, keywords, positionals,
         **defaults):
@@ -48,10 +50,8 @@ class ArgSpecTests(unittest.TestCase):
             [5, 14, 42], {'z': 'q'},
             a=5, b=[14,42], z='q')
 
-import logging
-logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
-
-class ParserGeneratorTests(unittest.TestCase):
+class ParserGeneratorTests(_logging.LogBufferMixin,
+                           unittest.TestCase):
     def setUp(self):
         self.gen = i.ParserGenerator(['ignored'],
             common1=dict(action='append', type=float),
@@ -83,8 +83,8 @@ class ParserGeneratorTests(unittest.TestCase):
         self.assertTrue(hasattr(func, 'parse_and_call'))
         self.assertTrue(hasattr(func, 'call_with_options'))
         
-        self.assertCallMatches('first', 1, 'first', [], 5, {})
-        self.assertCallMatches('a --common2', 2, 'a', [], 42, {})
+        self.assertCallMatches('first', 1, 'first', None, 5, {})
+        self.assertCallMatches('a --common2', 2, 'a', None, 42, {})
         self.assertCallMatches('b --common1=1 --common1=2 --common1=3',
             3, 'b', [1,2,3], 5, {})
 

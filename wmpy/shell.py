@@ -9,6 +9,11 @@ use.
 Requires parcon (from PyPI) to work.
 """
 
+# pylint: disable=W0231
+
+# TEMP, while there are big missing pieces, no unused import warnings:
+# pylint: disable=W0611
+
 import os, os.path
 import sys
 
@@ -54,7 +59,7 @@ import shlex
 from . import _proc, _io, _logging, VERSION
 
 import parcon
-from parcon import *
+from parcon import *  # pylint: disable=W0614
 
 def merge_strings(vals):
     rv = [vals[0]]
@@ -77,7 +82,7 @@ class ParseNode(object):
 
 class Var(ParseNode):
     def __init__(self, val):
-        dollar, name = val
+        _dollar, name = val
         self.name = name
     def __str__(self):
         return '${%s}' % self.name
@@ -103,12 +108,13 @@ def make_arg(val):
     if isinstance(val, str):
         return Arg(val)
     elif isinstance(val, list):
-        return ComplexArg(val)
+        return JoinedArg(val)
     else:
         return val
 
 @apply
 def grammar():
+    # pylint: disable=W0612
     L = Literal
     SL = SignificantLiteral
     ToStr = lambda p: Translate(p, ''.join)
@@ -140,9 +146,10 @@ def grammar():
         ))[make_arg]
     ShellLine = ShellArg[...] + End()
     return locals()
+    # pylint: enable=W0612
 
 def _main():
-    import readline
+    import readline  # pylint: disable=W0612
     print 'wmpy.shell %s.%s.%s' % VERSION
     while True:
         try:
@@ -152,6 +159,6 @@ def _main():
         except parcon.ParseException as ex:
             print ex
             print
-        except EOFError, KeyboardInterrupt:
+        except (EOFError, KeyboardInterrupt):
             print
             return

@@ -133,3 +133,16 @@ class InstanceLoggingMixin(object):
     def _error(self_or_cls, *arg, **kw):  # pylint: disable=E0213
         self_or_cls._logger.error(*arg, **kw)
 
+class LogBufferMixin(object):
+    """ Mixin for unittest.TestCase classes.
+    
+        Arranges to log to the current sys.stdout during test cases,
+        which allows logging output to be picked up by the unittest
+        framework output capturing mechanism if test output buffering
+        is in effect.
+    """
+    def setUp(self):
+        super(LogBufferMixin, self).setUp()
+        handler = logging.StreamHandler(sys.stdout)
+        logging.getLogger().addHandler(handler)
+        self.addCleanup(logging.getLogger().removeHandler, handler)

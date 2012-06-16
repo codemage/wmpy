@@ -13,8 +13,8 @@ if __name__ == '__main__':
     if __package__ is None:
         sys.stderr.write('run like this: python -m wmpy._proc\n')
         sys.exit(1)
-    from wmpy import _proc
-    _proc._main()
+    from wmpy import _proc  # pylint: disable=W0406
+    _proc._main()           # pylint: disable=W0212
     sys.exit()
 
 from . import _io

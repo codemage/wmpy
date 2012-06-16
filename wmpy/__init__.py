@@ -16,6 +16,7 @@ from ._threading import *
 _logger, _dbg, _info, _warn = get_logging_shortcuts(__name__)
 
 import re
+import functools
 
 _grouped_digits_re = re.compile(r'(\d+)')
 def nat_sort_key(val):
@@ -37,4 +38,26 @@ def nat_sort_key(val):
     # _dbg("nat_sort_key: %r -> %r", val, split_val)
     return split_val
 
+@functools.total_ordering
+class ValueObjectMixin(object):
+    """ Base class for hashable, comparable value objects.
+
+        Subclasses should implement a _cmp_key property as a base for
+        both comparison and hashing.  Note that instances of different
+        subclasses of this type will compare unequal and not be orderable even
+        if their _cmp_key values are the same.
+    """
+    @property
+    def _cmp_key(self):
+        return id(self)
+    def __eq__(self, other):
+        if type(self) != type(other):
+            return False
+        return self._cmp_key == other._cmp_key  # pylint: disable=W0212
+    def __lt__(self, other):
+        if type(self) != type(other):
+            raise TypeError
+        return self._cmp_key < other._cmp_key  # pylint: disable=W0212
+    def __hash__(self):
+        return hash(type(self)) ^ hash(self._cmp_key)
 
