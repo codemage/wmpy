@@ -116,7 +116,8 @@ class Tag(object):
 	self.image_list = image_list
 	self.factory = factory
 	self.dirty = False
-	self.load(initial=True)
+	if p.isfile(self.list_path):
+	    self.load(initial=True)
 
 	def _list_changed(image_list, weakself=weakref.ref(self)):
 	    self = weakself()
@@ -224,6 +225,19 @@ class TagDB(wmpy.InstanceLoggingMixin,
 		base=self.top_path)
 	return self.images[filename]
 
+    def _tag(self, tagname, list_path=None):
+	if list_path is None:
+	    list_path = p.join(self.tags_path, '%s.list' % tagname)
+	if tagname not in self.tags:
+	    self.tags[tagname] = Tag(
+		name=tagname,
+		list_path=list_path,
+		image_list=self._mm_images[tagname],
+		base=self.top_path,
+		factory=functools.partial(self._image, source=list_path),
+		)
+	return self.tags[tagname]
+
     def scan(self):
 	self._dbg("scanning %s...", self.top_path)
 	walk = os.walk(self.top_path, onerror=_raise)
@@ -253,13 +267,7 @@ class TagDB(wmpy.InstanceLoggingMixin,
 		    _warn("unrecognized file: %s", path)
 
 	for tag, list_path in tagfiles.iteritems():
-	    self.tags[tag] = Tag(
-		name=tag,
-		list_path=list_path,
-		image_list=self._mm_images[tag],
-		base=self.top_path,
-		factory=functools.partial(self._image, source=list_path),
-		)
+	    self._tag(tag, list_path)
     
     def _make_dupe_checker(self, path):
 	self._dbg("reading %s to check for duplicates", path)
@@ -369,7 +377,7 @@ class TagDB(wmpy.InstanceLoggingMixin,
 		info_w.flush()
 
 	    def _cmd_tag(command):
-		tag = self.tags[command[1]]
+		tag = self._tag(command[1])
 		fn = ' '.join(command[2:])
 		image = self.images[p.basename(fn)]
 		if tag.name in image.tags:
@@ -501,7 +509,7 @@ actions = {name[3:].replace('_', '-'): func
     help=dict(short='h', action='store_true',
 	      help='show this help message and exit')
     )
-def main(cfg='tags/imgtag.cfg', action=None, help=False, argv=[]):
+def main(cfg='imgtag.cfg', action=None, help=False, argv=[]):
     if help:
 	if action is not None:
 	    actions[options.action].parser.print_help()
