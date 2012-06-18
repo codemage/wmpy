@@ -105,6 +105,11 @@ def do_tag(db):
             raise ValueError('unknown command: ' + line.strip())
     db.save_dirty()
 
+@gen_parser
+def do_debug(db):
+    import code
+    code.interact(local=dict(db=db))
+
 actions = {name[3:].replace('_', '-'): func
     for name, func in globals().iteritems()
     if name.startswith('do_') and hasattr(func, 'parser')}

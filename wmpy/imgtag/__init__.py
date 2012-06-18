@@ -8,11 +8,11 @@ import sys
 import threading
 import weakref
 
-from . import _collection
-from . import _io
-from . import _logging
-from . import _threading
-from . import ValueObjectMixin
+from .. import _collection
+from .. import _io
+from .. import _logging
+from .. import _threading
+from .. import ValueObjectMixin
 
 _logger, _dbg, _info, _warn = _logging.get_logging_shortcuts(__name__)
 
@@ -153,7 +153,7 @@ class TagDB(_logging.InstanceLoggingMixin,
         if config is None:
             self.config = {}
             self._dbg("loading configuration from %s", config_path)
-            execfile(config_path, self.config)
+            execfile(self.config_path, self.config)
         else:
             self.config = config
 
@@ -165,7 +165,8 @@ class TagDB(_logging.InstanceLoggingMixin,
 
         self.scan()
     
-    def _image(self, abspath, source=None):
+    def _image(self, path, source=None):
+        abspath = p.abspath(p.join(self.top_path, path))
         filename = p.basename(abspath)
         if filename in self.images:
             if abspath not in self.images[filename].paths:
@@ -184,7 +185,7 @@ class TagDB(_logging.InstanceLoggingMixin,
     def _tag(self, tagname, list_path=None):
         if list_path is None:
             list_path = p.join(self.tags_path, '%s.list' % tagname)
-        if tagname not in self.tags:
+        
             self.tags[tagname] = Tag(
                 name=tagname,
                 list_path=list_path,
