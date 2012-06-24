@@ -162,8 +162,6 @@ class TagDB(_logging.InstanceLoggingMixin,
 
         self._mm_tags, self._mm_images = \
             _collection.ManyToMany('set', 'checked_list')
-
-        self.scan()
     
     def _image(self, path, source=None):
         abspath = p.abspath(p.join(self.top_path, path))
@@ -186,6 +184,7 @@ class TagDB(_logging.InstanceLoggingMixin,
         if list_path is None:
             list_path = p.join(self.tags_path, '%s.list' % tagname)
         
+        if tagname not in self.tags:
             self.tags[tagname] = Tag(
                 name=tagname,
                 list_path=list_path,

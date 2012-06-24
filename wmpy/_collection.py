@@ -8,6 +8,14 @@ _logger, _dbg, _info, _warn = _logging.get_logging_shortcuts(__name__)
 
 # pylint: disable=E1102,W0212
 
+class _weakmethod(object):
+    def __init__(self, method, weakref_cb):
+        self.obj = weakref.ref(method.im_self, weakref_cb)
+        self.method = method.im_func
+
+    def __call__(self, *args, **kw):
+        self.method(self.obj(), *args, **kw)
+
 class _ManyToManyCollection(#_logging.InstanceLoggingMixin,
                             object):
     inner = None
@@ -22,6 +30,23 @@ class _ManyToManyCollection(#_logging.InstanceLoggingMixin,
         self._items = items
         self._link_all(items)
         self.listeners = []
+
+    def add_weak_listener(self, cb):
+        """ Adds a bound method to this object's listeners, such that
+            the link will be broken if either self or cb.im_self is
+            deallocated.
+        """
+        weak_cb = None
+        def _remove_weak_listener(wself=weakref.ref(self)):
+            wself = wself()
+            if wself is None:
+                return
+            try:
+                wself.listeners.remove(weak_cb)
+            except ValueError:
+                pass
+        weak_cb = _weakmethod(cb, _remove_weak_listener)
+        return weak_cb
 
     def __index__(self, idx):
         return self._items[idx]

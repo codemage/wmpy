@@ -115,7 +115,10 @@ class InstanceLoggingMixin(object):
         self._logger access happens at some well-defined "first time".
     """
     _logger = _InstanceLoggerDescriptor()
-    __slots__ = (_logger.INSTANCE_LOGGER_KEY)
+
+    # __slots__ = (_logger.INSTANCE_LOGGER_KEY)
+    # ^ can't have slots on any base of a class also derived from many C
+    # extension types
 
     @automethod
     def _dbg(self_or_cls, *arg, **kw):  # pylint: disable=E0213
