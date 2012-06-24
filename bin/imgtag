@@ -148,6 +148,7 @@ def main(cfg='imgtag.cfg', action=None, help=False, argv=[]):
     action_kw = {}
     if 'db' in action.required_args:
         action_kw['db'] = TagDB(config_path=cfg)
+        action_kw['db'].scan()
     return action.parse_and_call(argv, **action_kw)
 
 if __name__ == '__main__':
