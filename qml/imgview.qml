@@ -1,4 +1,3 @@
-// import QtQuick 1.0 // to target S60 5th Edition or Maemo 5
 import QtQuick 1.1
 //import QtDesktop 0.1
 
@@ -29,7 +28,7 @@ Rectangle {
         anchors.fill: parent
         id: list
         keyNavigationWraps: true
-        cacheBuffer: parent.width*3
+        cacheBuffer: parent.width*2
         orientation: ListView.Horizontal
         highlightMoveSpeed: view.width*100
         highlightMoveDuration: 100
@@ -38,40 +37,14 @@ Rectangle {
         highlightRangeMode: ListView.StrictlyEnforceRange
         property bool completed: false
         Component.onCompleted: { list.completed = true }
-        delegate: Loader {
+        delegate: ImageLoader {
             height: view.height
-            width: view.width
-            id: imagewrapper
-            property variant image: modelData
-            Connections { target: image; onSizeChanged: resize() }
-            Connections { target: view; onHeightChanged: resize()
-                                        onWidthChanged: resize() }
-            onStatusChanged: resize()
-            function resize() {
-                if (!image.size) { return; }
-                if (imagewrapper.status != Loader.Ready) { return; }
+            width: {
+                if (!image.size) return view.width;
                 var scale = 1.0*view.height/image.size.height;
                 if (image.size.width * scale > view.width - 10)
                     scale = 1.0*(view.width - 10)/image.size.width;
-
-                var targetWidth = Math.floor(image.size.width * scale) + 10
-                if (imagewrapper.width == targetWidth)
-                    return;
-                imagewrapper.width = targetWidth;
-            }
-            sourceComponent: Image {
-                id: imageview
-                anchors.centerIn: parent
-                smooth: true
-                cache: false
-                asynchronous: true
-                fillMode: Image.PreserveAspectFit
-                source: image.path
-                visible: image.path != "nothing_loaded.png"
-                onStatusChanged: {
-                    if (imageview.status == Image.Ready)
-                        image.size = imageview.sourceSize;
-                }
+                return Math.floor(image.size.width * scale) + 10
             }
         }
         model: view.images
