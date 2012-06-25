@@ -71,6 +71,7 @@ class QTaggedImage(HasProperties, qt.core.Object):
     name, nameChanged = Property(str, lambda self: self._name)
     path, pathChanged = Property(str, lambda self: self._path)
     tags, tagsChanged = Property(qt.core.Object, lambda self: self._tags)
+    size, sizeChanged = SimpleProperty("QSize", "_size")
 
     def __init__(self, db, taggedImage):
         qt.core.Object.__init__(self)
@@ -79,6 +80,7 @@ class QTaggedImage(HasProperties, qt.core.Object):
         self._path = self._image.path
         self._db = weakref.proxy(db)
         self._tags = TagList(db, taggedImage)
+        self._size = None
         
     def clear(self, _ref=None):
         self._name = ''
@@ -92,7 +94,6 @@ class QTagDB(wmpy.InstanceLoggingMixin,
     loaded, loadedChanged = SimpleProperty(bool, '_loaded')
     failed, failedChanged = SimpleProperty(str, '_failed')
     tags, tagsChanged = SimpleProperty('QVariantMap', '_tags')
-    # tagNames, tagNamesChanged = SimpleProperty('QVariantList', '_tagnames')
 
     def __init__(self, *args, **kw):
         qt.core.Object.__init__(self)
@@ -111,7 +112,6 @@ class QTagDB(wmpy.InstanceLoggingMixin,
     def _resetTags(self):
         self.tags = {tag.name: QTag(self, tag)
             for tag in self._db.tags.values()}
-        # self.tagNames = [tagname for tagname in self._db.tags]
 
     @qt.core.Slot(str)
     def open(self, config_path):
@@ -166,14 +166,18 @@ class ImgView(qt.quick.View):
 
     def __init__(self, *args, **kw):
         qt.quick.View.__init__(self, *args, **kw)
+        self.db = QTagDB()
+        self.rootContext().setContextProperty('tagdb', self.db)
+        self.setSource(qt.core.Url(os.path.join(self.qml_path, 'imgview.qml')))
+        if self.status() != qt.quick.View.Ready:
+            raise Exception("failed to load qml " + self.status())
+
         self.setWindowTitle("ImgView")
         self.setResizeMode(qt.quick.View.SizeRootObjectToView)
         self.engine().quit.connect(self.quit)
 
-        self.db = QTagDB()
-        self.rootContext().setContextProperty('tagdb', self.db)
+        self.db.open("imgtag.cfg")
         self.rootContext().setContextProperty('app', self)
-        self.setSource(qt.core.Url(os.path.join(self.qml_path, 'imgview.qml')))
 
     @qt.core.Slot()
     def quit(self):

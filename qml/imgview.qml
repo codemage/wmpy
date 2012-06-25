@@ -11,34 +11,76 @@ Rectangle {
     
     property string tagName: ""
     property variant tag: tagdb.loaded && view.tagName ? tagdb.getTag(view.tagName) : false
-    property variant images: view.tag ? view.tag.images : false
-    property int imageIdx: 0
-    property int imageCount: view.images ? view.images.rowCount() : 0
-    property variant image: view.imageIdx < view.imageCount ?
-        images.data(view.imageIdx) : {"tags": [], "path": "nothing_loaded.png"}
+    property variant images: view.tag ? view.tag.images : [
+        {"image": {"tags":[{"name": "no image loaded"}]}, "path": "nothing_loaded.png"}
+        ]
+    property variant image: list.currentItem.image
 
-    function next() { view.imageIdx = (view.imageIdx + 1) % view.imageCount; }
-    function prev() {
-        view.imageIdx = (view.imageIdx + view.imageCount - 1) % view.imageCount;
-    }
+    function next() { list.incrementCurrentIndex(); }
+        // list.positionViewAtIndex(list.currentIndex+1, ListView.Center); }
+    function prev() { list.decrementCurrentIndex(); }
+        // list.positionViewAtIndex(list.currentIndex-1, ListView.Center); }
+    function random() { var target = Math.floor(Math.random()*list.count);
+        list.positionViewAtIndex(target, ListView.Center);
+        list.currentIndex = target;
+        }
 
-    onImageCountChanged: {
-        if (view.imageIdx > view.imageCount)
-            view.imageIdx = 0;
-    }
-        
-    Image {
+    ListView {
         anchors.fill: parent
-        fillMode: Image.PreserveAspectFit
-        smooth: true
-        asynchronous: true
-        visible: view.image.path != "nothing_loaded.png"
-        source: view.image.path
+        id: list
+        keyNavigationWraps: true
+        cacheBuffer: parent.width*3
+        orientation: ListView.Horizontal
+        highlightMoveSpeed: view.width*100
+        highlightMoveDuration: 100
+        preferredHighlightBegin: (view.width - list.currentItem.width) / 2
+        preferredHighlightEnd: list.preferredHighlightBegin
+        highlightRangeMode: ListView.StrictlyEnforceRange
+        property bool completed: false
+        Component.onCompleted: { list.completed = true }
+        delegate: Loader {
+            height: view.height
+            width: view.width
+            id: imagewrapper
+            property variant image: modelData
+            Connections { target: image; onSizeChanged: resize() }
+            Connections { target: view; onHeightChanged: resize()
+                                        onWidthChanged: resize() }
+            onStatusChanged: resize()
+            function resize() {
+                if (!image.size) { return; }
+                if (imagewrapper.status != Loader.Ready) { return; }
+                var scale = 1.0*view.height/image.size.height;
+                if (image.size.width * scale > view.width - 10)
+                    scale = 1.0*(view.width - 10)/image.size.width;
+
+                var targetWidth = Math.floor(image.size.width * scale) + 10
+                if (imagewrapper.width == targetWidth)
+                    return;
+                imagewrapper.width = targetWidth;
+            }
+            sourceComponent: Image {
+                id: imageview
+                anchors.centerIn: parent
+                smooth: true
+                cache: false
+                asynchronous: true
+                fillMode: Image.PreserveAspectFit
+                source: image.path
+                visible: image.path != "nothing_loaded.png"
+                onStatusChanged: {
+                    if (imageview.status == Image.Ready)
+                        image.size = imageview.sourceSize;
+                }
+            }
+        }
+        model: view.images
         MouseArea {
             anchors.fill: parent
             onClicked: next()
         }
     }
+
     Rectangle {
         anchors.fill: leftColumn
         color: "#80000000"
@@ -50,7 +92,7 @@ Rectangle {
         }
         Text { 
             color: "white"
-            text: view.imageIdx + "/" + view.imageCount
+            text: view.tag ? list.currentIndex + "/" + list.count : "0/0"
         }
         Repeater {
             delegate: Text {
@@ -64,18 +106,7 @@ Rectangle {
             }
             model: Object.keys(tagdb.tags)
         }
-        Button {
-            id: loadButton
-            onClicked: tagdb.open("imgtag.cfg")
-            text: "Load"
-        }
-        Button {
-            id: quitButton
-            onClicked: Qt.quit()
-            text: "Quit"
-        }
     }
-    ListModel { id: empty }
     Rectangle {
         anchors { verticalCenter: rightColumn.verticalCenter;
                   right: rightColumn.right;}
@@ -89,8 +120,8 @@ Rectangle {
                   verticalCenter: parent.verticalCenter}
         Repeater {
             id: tagview
-            model: view.image ? view.image.tags : empty
-            delegate: Text {color: "white"; text: value.name}
+            model: view.image.tags
+            delegate: Text {color: "white"; text: modelData.name}
         }
     }
     Text {
@@ -104,7 +135,6 @@ Rectangle {
     }
     Keys.onReleased: {
         if (event.key == Qt.Key_Return) {
-            console.log(app.fullScreen);
             app.fullScreen ? app.showNormal() : app.showFullScreen();
         } else if (event.key == Qt.Key_Escape || event.key == Qt.Key_Q) {
             Qt.quit();
@@ -113,10 +143,7 @@ Rectangle {
         } else if (event.key == Qt.Key_Left) {
             prev();
         } else if (event.key == Qt.Key_Z) {
-            if (tagdb.loaded) {
-                var rand = Math.random();
-                view.imageIdx = Math.floor(rand*view.imageCount)
-            }
+            random();
         } else {
             console.log(event.key);
         }

@@ -121,7 +121,7 @@ class SimpleProperty(Property):
                 _warn("setter for %s failed", name, exc_info=True)
         Property.__init__(self, type_, getter, setter)
 
-class ListBase(qt.core.AbstractListModel):
+class ListBase(HasProperties, qt.core.AbstractListModel):
     def __init__(self, parent=None, *args, **kw):
         qt.core.AbstractListModel.__init__(self, parent, *args, **kw)
         self.setRoleNames({0: 'value'})
@@ -137,6 +137,7 @@ class ListBase(qt.core.AbstractListModel):
         # TODO: make this smarter
         self.beginResetModel.emit()
         self._reset()
+        self.lengthChanged.emit()
         self.endResetModel.emit()
 
     @qt.core.Slot(result=int)
@@ -146,6 +147,8 @@ class ListBase(qt.core.AbstractListModel):
         except Exception:
             self._warn("failed in rowCount", exc_info=True)
             return 0
+
+    length, lengthChanged = Property(int, rowCount)
 
     @qt.core.Slot(int, result=qt.core.Object)
     def data(self, index, role=0):
