@@ -1,6 +1,9 @@
 from __future__ import absolute_import
 
-from fcntl import fcntl, F_SETFL, F_GETFL
+try:
+    from fcntl import fcntl, F_SETFL, F_GETFL
+except:
+    fcntl = None
 import io
 import os
 import select
@@ -47,12 +50,15 @@ class Poller(ClosingContextMixin,
              object):
     """ Simple callback-based wrapper around select.poll()
     """
-    IN = select.POLLIN | select.POLLPRI
-    OUT = select.POLLOUT
-    ERR = select.POLLERR
+    if hasattr(select, 'POLLIN'):
+        IN = select.POLLIN | select.POLLPRI
+        OUT = select.POLLOUT
+        ERR = select.POLLERR
 
     def __init__(self):
         super(Poller, self).__init__()
+        if not hasattr(self, 'IN'):
+            raise ValueError("no select.poll() on this os")
         self._poll = select.poll()
         self._handlers = {}
     def register(self, fd, events, handler):
@@ -87,5 +93,8 @@ class Poller(ClosingContextMixin,
         return empty
 
 def make_nonblocking(fd):
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | os.O_NONBLOCK)
+    if fcntl is not None:
+        fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | os.O_NONBLOCK)
+    else:
+        raise ValueError("unsupported without fcntl and os.O_NONBLOCK")
 
