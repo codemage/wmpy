@@ -168,9 +168,19 @@ class ImgView(qt.quick.View):
         qt.quick.View.__init__(self, *args, **kw)
         self.db = QTagDB()
         self.rootContext().setContextProperty('tagdb', self.db)
+
+        self.initialized = False
+        self.statusChanged.connect(self.statusCheck)
         self.setSource(qt.core.Url(os.path.join(self.qml_path, 'imgview.qml')))
-        if self.status() != qt.quick.View.Ready:
-            raise Exception("failed to load qml " + self.status())
+
+    def statusCheck(self):
+        if self.initialized or self.status() == qt.quick.View.Loading:
+            return
+        elif self.status() == qt.quick.View.Error:
+            # TODO: consider popping up an error message
+            sys.stderr.write("Failed to load QML\n")
+            self.close()
+        assert self.status() == qt.quick.View.Ready
 
         self.setWindowTitle("ImgView")
         self.setResizeMode(qt.quick.View.SizeRootObjectToView)
@@ -178,6 +188,7 @@ class ImgView(qt.quick.View):
 
         self.db.open("imgtag.cfg")
         self.rootContext().setContextProperty('app', self)
+        self.show()
 
     @qt.core.Slot()
     def quit(self):
@@ -189,7 +200,6 @@ class ImgView(qt.quick.View):
 def main(argv):
     app = qt.gui.Application(argv)
     view = ImgView()
-    view.show()
     return app.exec_()
 
 if __name__ == '__main__':
