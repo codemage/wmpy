@@ -14,6 +14,14 @@ Rectangle {
         {"image": {"tags":[{"name": "no image loaded"}]}, "path": "nothing_loaded.png"}
         ]
     property variant image: list.currentItem.image
+    Connections { target: tagdb;
+        onLoadedChanged: {
+            if (tagdb.loaded) {
+                if (view.tagName == "")
+                    view.tagName = Object.keys(tagdb.tags)[0];
+            } else { view.tagName = "" }
+        }
+    }
 
     function next() { list.incrementCurrentIndex(); }
         // list.positionViewAtIndex(list.currentIndex+1, ListView.Center); }
@@ -24,9 +32,8 @@ Rectangle {
         list.currentIndex = target;
         }
 
-    ListView {
+    ListView { id: list
         anchors.fill: parent
-        id: list
         keyNavigationWraps: true
         cacheBuffer: parent.width*2
         orientation: ListView.Horizontal
@@ -54,21 +61,15 @@ Rectangle {
         }
     }
 
-    Rectangle {
-        anchors.fill: leftColumn
-        color: "#80000000"
-    }
-    Column {
-        id: leftColumn
-        anchors {
-            left: parent.left; bottom: parent.bottom
-        }
-        Text { 
+    Rectangle { anchors.fill: leftColumn; color: "#80000000" }
+    Column { id: leftColumn
+        anchors { left: parent.left; bottom: parent.bottom }
+        Text { text: view.tag ? list.currentIndex + "/" + list.count : "0/0"
             color: "white"
-            text: view.tag ? list.currentIndex + "/" + list.count : "0/0"
         }
         Repeater {
-            delegate: Text {
+            delegate:
+            Text {
                 color: "white"; text: modelData
                 font.bold: modelData == view.tagName
                 MouseArea {

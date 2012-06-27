@@ -130,8 +130,8 @@ class QTagDB(wmpy.InstanceLoggingMixin,
                 self._warn('failed to load', exc_info=True)
                 self.failed = str(sys.exc_info()[1])
                 self._db = None
-            self.loaded = (self._db is not None)
             self._resetTags()
+            self.loaded = (self._db is not None)
             self.loading = False
         thread = threading.Thread(target=_load)
         thread.daemon = True
