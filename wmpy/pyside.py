@@ -133,12 +133,12 @@ class ListBase(HasProperties, qt.core.AbstractListModel):
     def _prep(self, val):
         return val
 
-    def changed(self):
+    def changed(self, *_args):
         # TODO: make this smarter
-        self.beginResetModel.emit()
+        self.beginResetModel()
         self._reset()
         self.lengthChanged.emit()
-        self.endResetModel.emit()
+        self.endResetModel()
 
     @qt.core.Slot(result=int)
     def rowCount(self, parent=qt.core.ModelIndex()):

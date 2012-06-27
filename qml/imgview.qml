@@ -10,9 +10,12 @@ Rectangle {
     
     property string tagName: ""
     property variant tag: tagdb.loaded && view.tagName ? tagdb.getTag(view.tagName) : false
-    property variant images: view.tag ? view.tag.images : [
-        {"image": {"tags":[{"name": "no image loaded"}]}, "path": "nothing_loaded.png"}
-        ]
+    property variant images: view.tag ? view.tag.images :
+        [{"image":
+            {"tags":[{"name": "no image loaded"}]},
+             "path": "nothing_loaded.png",
+             "hasTag": function(tag) { return false; }
+        }]
     property variant image: list.currentItem.image
     Connections { target: tagdb;
         onLoadedChanged: {
@@ -24,9 +27,7 @@ Rectangle {
     }
 
     function next() { list.incrementCurrentIndex(); }
-        // list.positionViewAtIndex(list.currentIndex+1, ListView.Center); }
     function prev() { list.decrementCurrentIndex(); }
-        // list.positionViewAtIndex(list.currentIndex-1, ListView.Center); }
     function random() { var target = Math.floor(Math.random()*list.count);
         list.positionViewAtIndex(target, ListView.Center);
         list.currentIndex = target;
@@ -37,7 +38,7 @@ Rectangle {
         keyNavigationWraps: true
         cacheBuffer: parent.width*2
         orientation: ListView.Horizontal
-        highlightMoveSpeed: view.width*100
+        highlightMoveSpeed: view.width*5
         highlightMoveDuration: 100
         preferredHighlightBegin: (view.width - list.currentItem.width) / 2
         preferredHighlightEnd: list.preferredHighlightBegin
@@ -67,39 +68,35 @@ Rectangle {
         Text { text: view.tag ? list.currentIndex + "/" + list.count : "0/0"
             color: "white"
         }
-        Repeater {
-            delegate:
-            Text {
+        Repeater { id: listAllTags
+            model: Object.keys(tagdb.tags)
+            delegate: Text {
                 color: "white"; text: modelData
                 font.bold: modelData == view.tagName
                 MouseArea {
-                    anchors{ left: parent.left; top: parent.top; bottom: parent.bottom }
+                    height: parent.height
                     width: leftColumn.width
                     onClicked: view.tagName = modelData
                 }
             }
-            model: Object.keys(tagdb.tags)
         }
     }
-    Rectangle {
-        anchors { verticalCenter: rightColumn.verticalCenter;
-                  right: rightColumn.right;}
-        width: Math.max(rightColumn.width, 50);
-        height: Math.max(rightColumn.height, 100);
+    Rectangle { id: rightColumn
+        anchors { verticalCenter: parent.verticalCenter;
+                  right: parent.right;}
         color: "#80000000"
-    }
-    Column {
-        id: rightColumn
-        anchors { right: parent.right;
-                  verticalCenter: parent.verticalCenter}
-        Repeater {
-            id: tagview
-            model: view.image.tags
-            delegate: Text {color: "white"; text: modelData.name}
+        width: currentTagsList.width + 20;
+        height: currentTagsList.height + 20;
+        Column { id: currentTagsList
+            anchors { margins: 10; left: parent.left; top: parent.top }
+            Repeater {
+                id: tagview
+                model: view.image.tags
+                delegate: Text {color: "white"; text: modelData.name}
+            }
         }
     }
-    Text {
-        id: loadingIndicator
+    Text { id: loadingIndicator
         text: "Loading..."
         color: "white"
         anchors.centerIn: parent
@@ -111,16 +108,61 @@ Rectangle {
         if (event.key == Qt.Key_Return) {
             app.fullScreen ? app.showNormal() : app.showFullScreen();
         } else if (event.key == Qt.Key_Escape || event.key == Qt.Key_Q) {
-            Qt.quit();
+            if (view.state == "") {
+                Qt.quit();
+            } else {
+                view.state = "";
+            }
         } else if (event.key == Qt.Key_Right || event.key == Qt.Key_Space) {
             next();
         } else if (event.key == Qt.Key_Left) {
             prev();
+        } else if (event.key == Qt.Key_T && view.tag) {
+            view.state = (view.state == "" ? "setTags" : "");
         } else if (event.key == Qt.Key_Z) {
             random();
         } else {
             console.log(event.key);
+            return;
         }
+        event.accepted = true;
     }
+    function hasTag(tagname) {
+        if (!view.tag) return false;
+        for (var i = 0; i < view.image.tags.length; i++) {
+            var tag = view.image.tags.data(i);
+            if (tag.name == tagname)
+                return true;
+        }
+        return false;
+    }
+    Rectangle { id: tagEditor
+        anchors.centerIn: parent
+        visible: false
+        color: "#CC000000"
+        width: tagEditorList.width + 30
+        height: tagEditorList.height + 30
+        Column { id: tagEditorList; Repeater {
+            model: Object.keys(tagdb.tags)
+            delegate: Text {
+                text: modelData
+                color: tagSelect.containsMouse ? "yellow" : "white"
+                font.bold: hasTag(modelData)
+                horizontalAlignment: Text.AlignHCenter
+                MouseArea {
+                    id: tagSelect
+                    hoverEnabled: true
+                    x: -15; width: tagEditor.width
+                    y: -5; height: parent.height+10
+                    onClicked: view.image.toggleTag(modelData)
+                }
+            }
+        } anchors.centerIn: parent; spacing: 10 }
+    }
+    states: [
+    State { name: "setTags"
+        PropertyChanges { target: tagEditor; visible: true }
+    }
+    ]
 }
 

@@ -46,6 +46,7 @@ class _ManyToManyCollection(#_logging.InstanceLoggingMixin,
             except ValueError:
                 pass
         weak_cb = _weakmethod(cb, _remove_weak_listener)
+        self.listeners.append(weak_cb)
         return weak_cb
 
     def __index__(self, idx):

@@ -87,6 +87,16 @@ class QTaggedImage(HasProperties, qt.core.Object):
         self._path = 'nothing_loaded.png'
         self._tags = None
 
+    @qt.core.Slot(str)
+    def toggleTag(self, name):
+        if name in self._image.tags:
+            print "removing tag %s from %s" % (name, self.name)
+            self._image.tags.remove(name)
+        else:
+            print "adding tag %s to %s" % (name, self.name)
+            self._image.tags.append(name)
+        self.tagsChanged.emit()
+
 class QTagDB(wmpy.InstanceLoggingMixin,
              HasProperties,
              qt.core.Object):
@@ -108,6 +118,10 @@ class QTagDB(wmpy.InstanceLoggingMixin,
         self.tags = {}
         self.tagNames = []
         self._qimages = {}
+
+    def save(self):
+        if self.loaded:
+            self._db.save_dirty()
 
     def _resetTags(self):
         self.tags = {tag.name: QTag(self, tag)
@@ -180,6 +194,7 @@ class ImgView(qt.quick.View):
             # TODO: consider popping up an error message
             sys.stderr.write("Failed to load QML\n")
             self.close()
+            return
         assert self.status() == qt.quick.View.Ready
 
         self.setWindowTitle("ImgView")
@@ -194,8 +209,8 @@ class ImgView(qt.quick.View):
     def quit(self):
         # this prevents a segfault for some reason:
         self.rootContext().setContextProperty('app', self.db)
+        self.db.save()
         self.close()
-        
 
 def main(argv):
     app = qt.gui.Application(argv)
