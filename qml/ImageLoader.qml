@@ -5,34 +5,27 @@ Loader {
     property variant image: modelData
     property int fillMode: Image.PreserveAspectFit
     property variant sourceSize: null
-    Component { id: unsized
-        Image { // XXX UNTESTED
-            id: imageview
-            anchors.centerIn: parent
-            fillMode: parent.fillMode
-            smooth: true
-            cache: false
-            asynchronous: true
-            source: image.path
-            visible: image.path != "nothing_loaded.png"
-            onStatusChanged: {
-                if (imageview.status == Image.Ready)
+    sourceComponent: Image {
+        id: imageview
+        anchors.centerIn: parent
+        fillMode: parent.fillMode
+        smooth: true
+        cache: false
+        asynchronous: true
+        source: image.path
+        visible: image.path != "nothing_loaded.png"
+        onStatusChanged: {
+            if (imageview.status == Image.Ready) {
+                if (image.size.width == 0 && imageview.state == "") {
                     image.size = imageview.sourceSize;
+                }
+            }
+        }
+        states: State { name: "shrunk"
+            PropertyChanges { target: imageview;
+                when: image.size.width != 0 && parent.sourceSize
+                sourceSize: parent.sourceSize
             }
         }
     }
-    Component { id: sized
-        Image {
-            id: imageview
-            anchors.centerIn: parent
-            fillMode: parent.fillMode
-            smooth: true
-            cache: false
-            asynchronous: true
-            source: image.path
-            visible: image.path != "nothing_loaded.png"
-            sourceSize: parent.sourceSize
-        }
-    }
-    sourceComponent: image.size && imagewrapper.sourceSize ? sized : unsized
 }

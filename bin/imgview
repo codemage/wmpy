@@ -71,7 +71,7 @@ class QTaggedImage(HasProperties, qt.core.Object):
     name, nameChanged = Property(str, lambda self: self._name)
     path, pathChanged = Property(str, lambda self: self._path)
     tags, tagsChanged = Property(qt.core.Object, lambda self: self._tags)
-    size, sizeChanged = SimpleProperty("QSize", "_size")
+    size, sizeChanged = SimpleProperty(qt.core.Size, "_size")
 
     def __init__(self, db, taggedImage):
         qt.core.Object.__init__(self)
@@ -80,7 +80,7 @@ class QTaggedImage(HasProperties, qt.core.Object):
         self._path = self._image.path
         self._db = weakref.proxy(db)
         self._tags = TagList(db, taggedImage)
-        self._size = None
+        self._size = qt.core.Size(0, 0)
         
     def clear(self, _ref=None):
         self._name = ''

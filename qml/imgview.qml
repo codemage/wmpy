@@ -45,14 +45,14 @@ Rectangle {
         highlightRangeMode: ListView.StrictlyEnforceRange
         property bool completed: false
         Component.onCompleted: { list.completed = true }
-        delegate: ImageLoader {
+        delegate: ImageLoader { id: imageloader
             height: view.height
             width: {
-                if (!image.size) return view.width;
-                var scale = 1.0*view.height/image.size.height;
-                if (image.size.width * scale > view.width - 10)
-                    scale = 1.0*(view.width - 10)/image.size.width;
-                return Math.floor(image.size.width * scale) + 10
+                if (!image.size.width) return view.width;
+                var ry = 1.0*view.height/image.size.height;
+                var rx = 1.0*view.width/image.size.width;
+                var scale = Math.min(rx, ry);
+                return Math.floor(image.size.width * scale) + 10;
             }
         }
         model: view.images
@@ -128,7 +128,7 @@ Rectangle {
         event.accepted = true;
     }
     function hasTag(tagname) {
-        if (!view.tag) return false;
+        if (!view.tag || !view.image) return false;
         for (var i = 0; i < view.image.tags.length; i++) {
             var tag = view.image.tags.data(i);
             if (tag.name == tagname)
