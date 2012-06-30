@@ -151,8 +151,8 @@ class ListBase(HasProperties, qt.core.AbstractListModel):
     length, lengthChanged = Property(int, rowCount)
 
     @qt.core.Slot(int, result=qt.core.Object)
-    def data(self, index, role=0):
-        if isinstance(index, qt.core.ModelIndex):
-            index = index.row()
-        return self._prep(self._items[index])
+    def get(self, row):
+        return self._prep(self._items[row])
 
+    def data(self, index, role=0):
+        return self.get(index.row())

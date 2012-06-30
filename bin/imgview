@@ -194,7 +194,7 @@ class ImgView(qt.quick.View):
             # TODO: consider popping up an error message
             sys.stderr.write("Failed to load QML\n")
             self.close()
-            return
+            sys.exit(1)
         assert self.status() == qt.quick.View.Ready
 
         self.setWindowTitle("ImgView")
@@ -208,9 +208,10 @@ class ImgView(qt.quick.View):
     @qt.core.Slot()
     def quit(self):
         # this prevents a segfault for some reason:
-        self.rootContext().setContextProperty('app', self.db)
+        self.rootContext().setContextProperty('app', qt.core.Object())
         self.db.save()
         self.close()
+        qt.core.CoreApplication.quit()
 
 def main(argv):
     app = qt.gui.Application(argv)

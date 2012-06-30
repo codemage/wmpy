@@ -8,15 +8,13 @@ Rectangle {
     height: 500
     focus: true
     
+    function z(obj, prop) { return obj ? obj[prop] : 0; }
+
     property string tagName: ""
+    property real zoomLevel: 1.5
     property variant tag: tagdb.loaded && view.tagName ? tagdb.getTag(view.tagName) : false
-    property variant images: view.tag ? view.tag.images :
-        [{"image":
-            {"tags":[{"name": "no image loaded"}]},
-             "path": "nothing_loaded.png",
-             "hasTag": function(tag) { return false; }
-        }]
-    property variant image: list.currentItem.image
+    property variant images: view.tag ? view.tag.images : []
+    property variant image: z(list.currentItem, 'image')
     Connections { target: tagdb;
         onLoadedChanged: {
             if (tagdb.loaded) {
@@ -33,38 +31,68 @@ Rectangle {
         list.currentIndex = target;
         }
 
+    Flickable { id: zoomed
+        visible: false
+        anchors.fill: parent
+        contentWidth: zoomLoader.width
+        contentHeight: zoomLoader.height
+        boundsBehavior: Flickable.StopAtBounds
+        ImageLoader { id: zoomLoader
+            image: view.image
+            width: Math.max(size.width*zoomLevel, view.width)
+            height: Math.max(size.height*zoomLevel, view.height)
+        }
+    }
     ListView { id: list
+        model: view.images
         anchors.fill: parent
         keyNavigationWraps: true
         cacheBuffer: parent.width*2
         orientation: ListView.Horizontal
         highlightMoveSpeed: view.width*5
         highlightMoveDuration: 100
-        preferredHighlightBegin: (view.width - list.currentItem.width) / 2
+        preferredHighlightBegin: list.currentItem && list.currentItem.width
+            ? (view.width - list.currentItem.width) / 2
+            : 0
         preferredHighlightEnd: list.preferredHighlightBegin
         highlightRangeMode: ListView.StrictlyEnforceRange
-        property bool completed: false
-        Component.onCompleted: { list.completed = true }
-        delegate: ImageLoader { id: imageloader
+        spacing: 10
+        delegate: Flickable { id: listEntry
+            property variant image: listLoader.image
             height: view.height
-            width: {
-                if (!image.size.width) return view.width;
-                var ry = 1.0*view.height/image.size.height;
-                var rx = 1.0*view.width/image.size.width;
-                var scale = Math.min(rx, ry);
-                return Math.floor(image.size.width * scale) + 10;
+            width: listLoader.width
+            contentWidth: listLoader.width
+            contentHeight: listLoader.height
+            boundsBehavior: Flickable.StopAtBounds
+            ImageLoader { id: listLoader
+                image: modelData
+                function zoom() {
+                    if (!image || !image.size.width) return 1;
+                    var s = image.size;
+                    var aspect = s.width/s.height;
+                    var ry = view.height/s.height;
+                    var rx = view.width/s.width;
+                    if (aspect < 1 && view.zoomLevel > 1)
+                        ry = view.height/(s.height/view.zoomLevel);
+                    return Math.min(rx, ry);
+                }
+                width: Math.min(view.width, listLoader.size.width * zoom());
+                height: Math.max(view.height, listLoader.size.height * zoom());
             }
-        }
-        model: view.images
-        MouseArea {
-            anchors.fill: parent
-            onClicked: next()
+            onContentHeightChanged: {
+                listEntry.contentY = (listEntry.contentHeight - view.height)/2
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: next()
+            }
         }
     }
 
     Rectangle { anchors.fill: leftColumn; color: "#80000000" }
     Column { id: leftColumn
         anchors { left: parent.left; bottom: parent.bottom }
+        Text { text: view.zoomLevel; color: "white" }
         Text { text: view.tag ? list.currentIndex + "/" + list.count : "0/0"
             color: "white"
         }
@@ -78,21 +106,6 @@ Rectangle {
                     width: leftColumn.width
                     onClicked: view.tagName = modelData
                 }
-            }
-        }
-    }
-    Rectangle { id: rightColumn
-        anchors { verticalCenter: parent.verticalCenter;
-                  right: parent.right;}
-        color: "#80000000"
-        width: currentTagsList.width + 20;
-        height: currentTagsList.height + 20;
-        Column { id: currentTagsList
-            anchors { margins: 10; left: parent.left; top: parent.top }
-            Repeater {
-                id: tagview
-                model: view.image.tags
-                delegate: Text {color: "white"; text: modelData.name}
             }
         }
     }
@@ -118,9 +131,17 @@ Rectangle {
         } else if (event.key == Qt.Key_Left) {
             prev();
         } else if (event.key == Qt.Key_T && view.tag) {
-            view.state = (view.state == "" ? "setTags" : "");
-        } else if (event.key == Qt.Key_Z) {
+            view.state = (view.state == "setTags" ? "" : "setTags");
+        } else if (event.key == Qt.Key_R) {
             random();
+        } else if (event.key == Qt.Key_Z) {
+            view.state = (view.state == "zoomed" ? "" : "zoomed");
+        } else if (event.key == Qt.Key_Up) {
+            zoomLevel += 0.25;
+        } else if (event.key == Qt.Key_Down) {
+            zoomLevel -= 0.25;
+        } else if (event.key == Qt.Key_X) {
+            zoomLevel =  1.5;
         } else {
             console.log(event.key);
             return;
@@ -128,13 +149,28 @@ Rectangle {
         event.accepted = true;
     }
     function hasTag(tagname) {
-        if (!view.tag || !view.image) return false;
+        if (!view.image) return false;
         for (var i = 0; i < view.image.tags.length; i++) {
-            var tag = view.image.tags.data(i);
+            var tag = view.image.tags.get(i);
             if (tag.name == tagname)
                 return true;
         }
         return false;
+    }
+    Rectangle { id: rightColumn
+        anchors { verticalCenter: parent.verticalCenter;
+                  right: parent.right;}
+        color: "#80000000"
+        width: currentTagsList.width + 20;
+        height: currentTagsList.height + 20;
+        Column { id: currentTagsList
+            anchors { margins: 10; left: parent.left; top: parent.top }
+            Repeater {
+                id: tagview
+                model: view.image ? view.image.tags : []
+                delegate: Text {color: "white"; text: modelData.name}
+            }
+        }
     }
     Rectangle { id: tagEditor
         anchors.centerIn: parent
@@ -160,8 +196,12 @@ Rectangle {
         } anchors.centerIn: parent; spacing: 10 }
     }
     states: [
-    State { name: "setTags"
+    State { name: "setTags";
         PropertyChanges { target: tagEditor; visible: true }
+    },
+    State { name: "zoomed";
+        PropertyChanges { target: zoomed; visible: true }
+        PropertyChanges { target: list; visible: false }
     }
     ]
 }
