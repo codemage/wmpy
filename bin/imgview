@@ -185,7 +185,8 @@ class ImgView(qt.quick.View):
 
         self.initialized = False
         self.statusChanged.connect(self.statusCheck)
-        self.setSource(qt.core.Url(os.path.join(self.qml_path, 'imgview.qml')))
+        self.setSource(qt.core.Url.fromLocalFile(
+            os.path.join(self.qml_path, 'imgview.qml')))
 
     def statusCheck(self):
         if self.initialized or self.status() == qt.quick.View.Loading:
