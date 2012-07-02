@@ -15,6 +15,7 @@ Rectangle {
     property variant tag: tagdb.loaded && view.tagName ? tagdb.getTag(view.tagName) : false
     property variant images: view.tag ? view.tag.images : []
     property variant image: z(list.currentItem, 'image')
+
     Connections { target: tagdb;
         onLoadedChanged: {
             if (tagdb.loaded) {
@@ -76,7 +77,9 @@ Rectangle {
                         ry = view.height/(s.height/view.zoomLevel);
                     return Math.min(rx, ry);
                 }
-                width: Math.min(view.width, listLoader.size.width * zoom());
+                width: listLoader.size.width
+                    ? Math.min(view.width, listLoader.size.width * zoom())
+                    : view.width*0.75
                 height: Math.max(view.height, listLoader.size.height * zoom());
             }
             onContentHeightChanged: {
@@ -173,7 +176,7 @@ Rectangle {
         }
     }
     Rectangle { id: tagEditor
-        anchors.centerIn: parent
+        anchors { verticalCenter: parent.verticalCenter; right: parent.right }
         visible: false
         color: "#CC000000"
         width: tagEditorList.width + 30
@@ -198,6 +201,7 @@ Rectangle {
     states: [
     State { name: "setTags";
         PropertyChanges { target: tagEditor; visible: true }
+        PropertyChanges { target: rightColumn; visible: false }
     },
     State { name: "zoomed";
         PropertyChanges { target: zoomed; visible: true }
