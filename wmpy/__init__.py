@@ -4,19 +4,14 @@ Copyright (c) 2012 Walter Mundt; see LICENSE file for details.
 """
 from __future__ import absolute_import
 
-VERSION = (0, 0, 1)
-
-from ._collection import *
-from ._logging import *
-from ._io import *
-from ._introspect import *
-from ._proc import *
-from ._threading import *
-
-_logger, _dbg, _info, _warn = get_logging_shortcuts(__name__)
-
 import re
 import functools
+
+VERSION = (0, 0, 2)
+
+from ._logging import *
+_logger, _dbg, _info, _warn = get_logging_shortcuts(__name__)
+
 
 _grouped_digits_re = re.compile(r'(\d+)')
 def nat_sort_key(val):
@@ -60,4 +55,19 @@ class ValueObjectMixin(object):
         return self._cmp_key < other._cmp_key  # pylint: disable=W0212
     def __hash__(self):
         return hash(type(self)) ^ hash(self._cmp_key)
+
+class weakmethod(object):
+    """ Converts a bound method to one with a weakly-referenced 'self'. """
+    def __init__(self, method, weakref_cb):
+        self.obj = weakref.ref(method.im_self, weakref_cb)
+        self.method = method.im_func
+
+    def __call__(self, *args, **kw):
+        self.method(self.obj(), *args, **kw)
+
+from ._collection import *
+from ._io import *
+from ._introspect import *
+from ._proc import *
+from ._threading import *
 

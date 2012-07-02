@@ -1,20 +1,56 @@
+""" wmpy collections
+
+Many of these are slower than they need to be, but they do useful things.
+"""
 import collections
 import operator
 import types
 import weakref
 
-from . import _logging
+from . import _logging, watchable, weakmethod
 _logger, _dbg, _info, _warn = _logging.get_logging_shortcuts(__name__)
 
 # pylint: disable=E1102,W0212
 
-class _weakmethod(object):
-    def __init__(self, method, weakref_cb):
-        self.obj = weakref.ref(method.im_self, weakref_cb)
-        self.method = method.im_func
+class WatchableList(watchable.Mixin):
+    def __init__(self):
+        self._contents = []
+    def __getitem__(self, idx):
+        return self._contents[idx]
+    def __len__(self):
+        return len(self.contents)
+    def __iter__(self):
+        return iter(self.contents)
 
-    def __call__(self, *args, **kw):
-        self.method(self.obj(), *args, **kw)
+    def __setitem__(self, idx, value):
+        with self._event('update', idx=idx, new_value=value):
+            self._contents[idx] = value
+
+    def __delitem__(self, idx):
+        update_idx = idx
+        if not isinstance(idx, slice):
+            update_idx = slice(idx, idx+1)
+        with self._event('update', idx=update_idx, new_value=()), \
+             self._event('del', idx=idx):
+            del self._contents[idx]
+
+    def append(self, value):
+        with self._event('update', idx=slice(len(self),None), new_value=(value,)), \
+             self._event('extend', (value,)):
+            self._contents.append(value)
+
+    def extend(self, value):
+        with self._event('update', idx=slice(len(self),None), new_value=value), \
+             self._event('extend', value):
+            self._contents.extend(value)
+
+    def remove(self, value):
+        for idx, my_value in enumerate(self._contents):
+            if value == my_value:
+                del self[idx]
+                return
+        raise ValueError("%r not in %s@%s",
+            value, type(self), id(self))
 
 class _ManyToManyCollection(#_logging.InstanceLoggingMixin,
                             object):
@@ -45,7 +81,7 @@ class _ManyToManyCollection(#_logging.InstanceLoggingMixin,
                 wself.listeners.remove(weak_cb)
             except ValueError:
                 pass
-        weak_cb = _weakmethod(cb, _remove_weak_listener)
+        weak_cb = weakmethod(cb, _remove_weak_listener)
         self.listeners.append(weak_cb)
         return weak_cb
 
