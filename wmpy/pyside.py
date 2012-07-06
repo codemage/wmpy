@@ -1,5 +1,6 @@
 from PySide import QtCore, QtDeclarative, QtGui
 
+from ._collection import WatchableList
 from . import _logging
 _logger, _dbg, _info, _warn = _logging.get_logging_shortcuts(__name__)
 
@@ -121,7 +122,107 @@ class SimpleProperty(Property):
                 _warn("setter for %s failed", name, exc_info=True)
         Property.__init__(self, type_, getter, setter)
 
+class ListModel(WatchableList, HasProperties, qt.core.AbstractListModel):
+    def __init__(self, parent=None, *args, **kw):
+        qt.core.AbstractListModel.__init__(self, parent, *args, **kw)
+        WatchableList.__init__(self)
+        self.setRoleNames({0: 'value'})
+        self.add_listener_gen('update', self.update_gen)
+        self.add_listener_gen('insert', self.insert_gen)
+        self.add_listener_gen('del', self.delete_gen)
+
+    def update_gen(self, _also_self, _eventname, idx, new_value):
+        if isinstance(idx, slice):
+            start, stop, step = idx.indices(len(self))
+            if step != 1:
+                raise ValueError("Can't update non-contiguous slices")
+
+        else:
+            start = idx
+            stop = idx+1
+
+        yield
+        self.dataChanged.emit(
+            self.index(start, 0),
+            self.index(stop-1, 0))
+
+    def insert_gen(self, _also_self, _eventname, idx, values):
+        self.beginInsertRows(qt.core.ModelIndex(), idx, idx+len(values)-1)
+        result_kw = yield
+        self.endInsertRows()
+        if 'exc_info' in result_kw:
+            self.beginResetModel()
+            self.endResetModel()
+        self.lengthChanged.emit()
+
+    def delete_gen(self, _also_self, _eventname, idx):
+        if isinstance(idx, slice):
+            start, stop, step = idx.indices(len(self))
+            if step != 1:
+                raise ValueError("Can't del non-contiguous slices")
+        else:
+            start = idx
+            stop = idx+1
+
+        self.beginRemoveRows(qt.core.ModelIndex(), start, stop-1)
+        result_kw = yield
+        self.endRemoveRows()
+        if 'exc_info' in result_kw:
+            self.reset()
+        self.lengthChanged.emit()
+
+    @qt.core.Slot(result=int)
+    def rowCount(self, parent=qt.core.ModelIndex()):
+        return len(self)
+
+    length, lengthChanged = Property(int, rowCount)
+
+    def _prep(self, val):
+        return val
+
+    def data(self, index, role=0):
+        if role != 0 or index.column() != 0 or index.parent().isValid():
+            return None
+        index = index.row()
+        try:
+            return self._prep(self[index])
+        except Exception:
+            _warn("Exception in %s.data()", self, exc_info=True)
+            return None
+
+    @qt.core.Slot()
+    def reset(self):
+        self.beginResetModel()
+        self.endResetModel()
+
+    @qt.core.Slot(int, result="QVariant")
+    def get(self, row):
+        try:
+            return self.data(self.index(row))
+        except Exception:
+            _warn("Exception in %s.get()", self, exc_info=True)
+            return None
+
+    @qt.core.Slot(int, "QVariant")
+    def insert(self, row, item):
+        if isinstance(item, list):
+            self[row:row] = item
+        else:
+            self[row:row] = [item]
+
+    @qt.core.Slot("QVariant")
+    def append(self, item):
+        super(ListModel, self).append(item)
+
+    @qt.core.Slot(int)
+    def remove(self, row):
+        del self[row]
+
 class ListBase(HasProperties, qt.core.AbstractListModel):
+    # this is a hack designed to work on top of
+    # _collections.ManyToManyCollection for imgview
+    # when that is refactored to use the WatchableList-style interface we can
+    # make this a simple mix of the MMList/MMSet and ListModel above
     def __init__(self, parent=None, *args, **kw):
         qt.core.AbstractListModel.__init__(self, parent, *args, **kw)
         self.setRoleNames({0: 'value'})
@@ -132,6 +233,9 @@ class ListBase(HasProperties, qt.core.AbstractListModel):
 
     def _prep(self, val):
         return val
+
+    def __getitem__(self, idx):
+        return self._items[idx]
 
     def changed(self, *_args):
         # TODO: make this smarter
@@ -150,9 +254,13 @@ class ListBase(HasProperties, qt.core.AbstractListModel):
 
     length, lengthChanged = Property(int, rowCount)
 
-    @qt.core.Slot(int, result=qt.core.Object)
+    @qt.core.Slot(int, result="QVariant")
     def get(self, row):
-        return self._prep(self._items[row])
+        try:
+            return self._prep(self._items[row])
+        except Exception:
+            self._warn("failed in get()", exc_info=True)
+            return None
 
     def data(self, index, role=0):
         return self.get(index.row())

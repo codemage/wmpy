@@ -3,6 +3,7 @@ import itertools
 import os
 from os import path as p
 import pipes
+import stat
 import subprocess as sp
 import sys
 import threading
@@ -97,12 +98,12 @@ class Tag(object):
         new_image_list = []
         with file(self.list_path, 'rb') as fp:
             for line in fp:
-                line = line.strip()
+                line = unicode(line.strip(), 'utf-8')
                 if len(line) == 0:
                     continue
 
                 if self.base is not None:
-                    path = p.join(self.base, line)
+                    path = p.join(self.base, *line.split('/'))
                 name = p.basename(line)
                 if name in seen_names:
                     continue
@@ -123,6 +124,8 @@ class Tag(object):
                 path = image.path
                 if self.base is not None:
                     path = p.relpath(image.path, self.base)
+                path = path.replace('\\', '/').encode('utf-8')
+                print path, ''.join('%x' % ord(c) for c in path)
                 fp.write("%s\n" % path)
         self.dirty = False
 
@@ -147,9 +150,9 @@ class TagDB(_logging.InstanceLoggingMixin,
     def __init__(self, config_path=None, config=None):
         _logging.InstanceLoggingMixin.__init__(self)
         if config_path is None:
-            self.config_path = p.abspath('./imgtag.cfg')
+            self.config_path = p.abspath(u'./imgtag.cfg')
         else:
-            self.config_path = p.abspath(config_path)
+            self.config_path = p.abspath(unicode(config_path))
         if config is None:
             self.config = {}
             self._dbg("loading configuration from %s", config_path)
@@ -216,7 +219,10 @@ class TagDB(_logging.InstanceLoggingMixin,
                     else:
                         tagfiles[name] = path
                 elif ext in self.config['taggable_extensions']:
-                    self._image(path)
+                    if os.stat(path)[stat.ST_SIZE] == 0:
+                        _warn("ignoring empty file: %s", path)
+                    else:
+                        self._image(path)
                 elif ext in self.config.get('ignore_extensions', ()):
                     pass
                 else:

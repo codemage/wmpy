@@ -11,6 +11,75 @@ from . import _collection as c
 
 # pylint: disable=E1102,W0212
 
+class WatchableListTests(_logging.LogBufferMixin,
+                         unittest.TestCase):
+    def setUp(self):
+        self.expected = []
+
+    def testBasicListOps(self):
+        wl = c.WatchableList()
+        self.assertEqual(0, len(wl))
+        self.assertEqual((), tuple(wl))
+        wl.append(1)
+        self.assertEqual(1, len(wl))
+        self.assertEqual((1,), tuple(wl))
+        wl.extend([2, 3])
+        self.assertEqual(3, len(wl))
+        self.assertEqual((1,2,3), tuple(wl))
+        wl[0] = 4
+        self.assertEqual((4,2,3), tuple(wl))
+        wl[1:3] = [4, 5]
+        self.assertEqual((4,4,5), tuple(wl))
+        del wl[2]
+        self.assertEqual((4,4), tuple(wl))
+        wl.remove(4)
+        self.assertEqual((4,), tuple(wl))
+        with self.assertRaises(ValueError):
+            wl.remove(-1)
+        self.assertEqual((4,), tuple(wl))
+
+    def listener(self, wl, eventname, **kw):
+        self.assertIn((eventname, kw), self.expected,
+            "Unexpected event %s: %s\n\n%s" % (eventname, kw,
+            "\n".join(repr(e) for e in self.expected)))
+        self.expected.remove((eventname, kw))
+
+    @contextmanager
+    def assertEventEmitted(self, eventname, **kw):
+        outer_expected = len(self.expected)
+        self.expected.append((eventname, kw))
+        yield
+        if outer_expected == 0:
+            self.assertEqual(0, len(self.expected),
+                "Expected event not seen:\n\n%s" %
+                "\n".join(repr(e) for e in self.expected))
+
+    def testEvents(self):
+        wl = c.WatchableList([1,2,3])
+        wl.add_listener_after('update', self.listener)
+        wl.add_listener_after('insert', self.listener)
+        wl.add_listener_after('del', self.listener)
+        self.assertEqual([1,2,3], list(wl))
+        with self.assertEventEmitted('update', idx=1, new_value=4):
+            wl[1] = 4
+        self.assertEqual([1,4,3], list(wl))
+        with self.assertEventEmitted('del', idx=1):
+            del wl[1]
+        self.assertEqual([1,3], list(wl))
+        with self.assertEventEmitted('update', idx=slice(0,2), new_value=[1,2]), \
+             self.assertEventEmitted('insert', idx=2, values=[3]):
+            wl[:] = [1,2,3]
+        self.assertEqual([1,2,3], list(wl))
+        with self.assertEventEmitted('del', idx=1):
+            wl.remove(2)
+        self.assertEqual([1,3], list(wl))
+        with self.assertEventEmitted('insert', idx=2, values=[7,8,9]):
+            wl.extend([7,8,9])
+        self.assertEqual([1,3,7,8,9], list(wl))
+        with self.assertEventEmitted('insert', idx=5, values=(10,)):
+            wl.append(10)
+        self.assertEqual([1,3,7,8,9,10], list(wl))
+
 class ManyToManyTests(_logging.LogBufferMixin,
                        unittest.TestCase):
     @staticmethod
@@ -135,4 +204,6 @@ class ManyToManyTests(_logging.LogBufferMixin,
         self.assertItemsEqual([0], right[3])
 
 if __name__ == '__main__':
+    import logging
+    logging.basicConfig(level=logging.DEBUG)
     unittest.main()

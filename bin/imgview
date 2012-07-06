@@ -17,15 +17,15 @@ if __name__ == '__main__':
     sys.path[0] = os.path.join(sys.path[0], '..')
 
 import wmpy
-from wmpy import imgtag
-from wmpy.pyside import qt, Property, SimpleProperty, HasProperties, ListBase
+from wmpy import imgtag, pyside as wmpyside
+from wmpy.pyside import qt
 _logger, _dbg, _info, _warn = wmpy.get_logging_shortcuts(__name__)
 
-class TagContents(ListBase):
+class TagContents(wmpyside.ListBase):
     def __init__(self, db, tag, parent=None, *args, **kw):
         self._db = weakref.proxy(db)
         self._tag = weakref.proxy(tag)
-        ListBase.__init__(self, parent, *args, **kw)
+        wmpyside.ListBase.__init__(self, parent, *args, **kw)
         self._tag.image_list.add_weak_listener(self.changed)
 
     def _reset(self):
@@ -34,11 +34,11 @@ class TagContents(ListBase):
     def _prep(self, value):
         return self._db.getImage(value)
 
-class TagList(ListBase):
+class TagList(wmpyside.ListBase):
     def __init__(self, db, image, parent=None, *args, **kw):
         self._db = weakref.proxy(db)
         self._image = weakref.proxy(image)
-        ListBase.__init__(self, parent, *args, **kw)
+        wmpyside.ListBase.__init__(self, parent, *args, **kw)
         self._image.tags.add_weak_listener(self.changed)
 
     def _reset(self):
@@ -51,15 +51,14 @@ class TagList(ListBase):
             return val
         return self._db.getTag(val)
 
-class QTag(HasProperties, qt.core.Object):
-
-    name, nameChanged = Property(str, lambda self: self.tag.name)
+class QTag(wmpyside.HasProperties, qt.core.Object):
+    name, nameChanged = wmpyside.Property(str, lambda self: self.tag.name)
     listPath, listPathChanged = \
-        Property(str, lambda self: self.tag.list_path)
+        wmpyside.Property(str, lambda self: self.tag.list_path)
     dirty, dirtyChanged = \
-        Property(bool, lambda self: self.tag.dirty)
+        wmpyside.Property(bool, lambda self: self.tag.dirty)
     images, imagesChanged = \
-        Property(qt.core.Object, lambda self: self._images)
+        wmpyside.Property(qt.core.Object, lambda self: self._images)
 
     def __init__(self, db, tag):
         qt.core.Object.__init__(self)
@@ -67,11 +66,11 @@ class QTag(HasProperties, qt.core.Object):
         self.db = weakref.proxy(db)
         self._images = TagContents(db, tag)
 
-class QTaggedImage(HasProperties, qt.core.Object):
-    name, nameChanged = Property(str, lambda self: self._name)
-    path, pathChanged = Property(str, lambda self: self._path)
-    tags, tagsChanged = Property(qt.core.Object, lambda self: self._tags)
-    size, sizeChanged = SimpleProperty(qt.core.Size, "_size")
+class QTaggedImage(wmpyside.HasProperties, qt.core.Object):
+    name, nameChanged = wmpyside.Property(str, lambda self: self._name)
+    path, pathChanged = wmpyside.Property(str, lambda self: self._path)
+    tags, tagsChanged = wmpyside.Property(qt.core.Object, lambda self: self._tags)
+    size, sizeChanged = wmpyside.SimpleProperty(qt.core.Size, "_size")
 
     def __init__(self, db, taggedImage):
         qt.core.Object.__init__(self)
@@ -98,15 +97,15 @@ class QTaggedImage(HasProperties, qt.core.Object):
         self.tagsChanged.emit()
 
 class QTagDB(wmpy.InstanceLoggingMixin,
-             HasProperties,
+             wmpyside.HasProperties,
              qt.core.Object):
-    loading, loadingChanged = SimpleProperty(bool, '_loading')
-    loaded, loadedChanged = SimpleProperty(bool, '_loaded')
-    failed, failedChanged = SimpleProperty(str, '_failed')
-    tags, tagsChanged = SimpleProperty('QVariantMap', '_tags')
+    loading, loadingChanged = wmpyside.SimpleProperty(bool, '_loading')
+    loaded, loadedChanged = wmpyside.SimpleProperty(bool, '_loaded')
+    failed, failedChanged = wmpyside.SimpleProperty(str, '_failed')
+    tags, tagsChanged = wmpyside.SimpleProperty('QVariantMap', '_tags')
 
     def __init__(self, *args, **kw):
-        qt.core.Object.__init__(self)
+        qt.core.Object.__init__(self, *args, **kw)
         self.clear()
 
     @qt.core.Slot()
@@ -175,11 +174,23 @@ class QTagDB(wmpy.InstanceLoggingMixin,
         #self._dbg("returning qimage %s@%s", name, id(self._qimages[name]))
         return self._qimages[name]
 
+    @qt.core.Slot(str, result="QVariant")
+    def getImageList(self, tagexpr):
+        imagelist = wmpyside.ListModel()
+        if tagexpr in self._db.tags:
+            imagenames = self.getTag(tagexpr).images[:]
+            imagelist[:] = (self.getImage(name) for name in imagenames)
+        else:
+            images = self._db.find_by_tags(tagexpr)
+            imagelist[:] = (self.getImage(i.name) for i in images)
+        return imagelist
+
 class ImgView(qt.quick.View):
     qml_path = os.path.join(os.path.dirname(__file__), '..', 'qml')
 
-    def __init__(self, *args, **kw):
+    def __init__(self, tags_dir, *args, **kw):
         qt.quick.View.__init__(self, *args, **kw)
+        self.config_path = config_path=os.path.join(tags_dir, 'imgtag.cfg')
         self.db = QTagDB()
         self.rootContext().setContextProperty('tagdb', self.db)
 
@@ -195,15 +206,24 @@ class ImgView(qt.quick.View):
             # TODO: consider popping up an error message
             sys.stderr.write("Failed to load QML\n")
             self.close()
+            qt.core.CoreApplication.exit(1)
             sys.exit(1)
-        assert self.status() == qt.quick.View.Ready
 
-        self.setWindowTitle("ImgView")
-        self.setResizeMode(qt.quick.View.SizeRootObjectToView)
-        self.engine().quit.connect(self.quit)
+        try:
+            assert self.status() == qt.quick.View.Ready
 
-        self.db.open("imgtag.cfg")
-        self.rootContext().setContextProperty('app', self)
+            self.setWindowTitle("ImgView")
+            self.setResizeMode(qt.quick.View.SizeRootObjectToView)
+            self.engine().quit.connect(self.quit)
+
+            self.db.open(self.config_path)
+            self.rootContext().setContextProperty('app', self)
+        except:
+            _warn("error loading", exc_info=True)
+            self.close()
+            qt.core.CoreApplication.exit(1)
+            sys.exit(1)
+
         self.show()
 
     @qt.core.Slot()
@@ -214,13 +234,17 @@ class ImgView(qt.quick.View):
         self.close()
         qt.core.CoreApplication.quit()
 
-def main(argv):
-    app = qt.gui.Application(argv)
-    view = ImgView()
-    return app.exec_()
+gen_parser = wmpy.ParserGenerator()
+
+@gen_parser()
+def main(tags_dir='.'):
+    view = ImgView(tags_dir)
+    return qt.core.CoreApplication.exec_()
 
 if __name__ == '__main__':
-    #import doctest
-    #doctest.testmod()
-    #sys.exit(0)
-    sys.exit(main(sys.argv))
+    app = qt.gui.Application(sys.argv)
+    qt_argv = app.arguments()
+    if 'python' in qt_argv[0]:
+        del qt_argv[0]
+    del qt_argv[0]
+    sys.exit(main.parse_and_call(qt_argv))

@@ -12,36 +12,54 @@ _logger, _dbg, _info, _warn = _logging.get_logging_shortcuts(__name__)
 
 # pylint: disable=E1102,W0212
 
-class WatchableList(watchable.Mixin):
-    def __init__(self):
-        self._contents = []
+class WatchableList(watchable.Mixin, object):
+    def __init__(self, *args, **kw):
+        watchable.Mixin.__init__(self)
+        self._contents = list(*args, **kw)
     def __getitem__(self, idx):
         return self._contents[idx]
     def __len__(self):
-        return len(self.contents)
+        return len(self._contents)
     def __iter__(self):
-        return iter(self.contents)
+        return iter(self._contents)
 
     def __setitem__(self, idx, value):
-        with self._event('update', idx=idx, new_value=value):
-            self._contents[idx] = value
+        if isinstance(idx, slice):
+            value = list(value)
+            idx_bounds = idx.indices(len(self))
+            indices = xrange(*idx_bounds)
+            if len(indices) == len(value):
+                with self._event('update', idx=idx, new_value=value):
+                    self._contents[idx] = value
+            elif len(indices) > len(value):
+                start, stop, step = idx_bounds
+                if step != 1:
+                    raise ValueError("shrinking extended slices unsupported")
+                self[start:start+len(value)] = value
+                del self[start+len(value):stop]
+            else: # len(indices) < len(value), inserting elements
+                start, stop, step = idx_bounds
+                if step != 1:
+                    raise ValueError("growing extended slices unsupported")
+                insertPoint = start + len(indices)
+                self[start:insertPoint] = value[:len(indices)]
+                new_values = value[len(indices):]
+                with self._event('insert', idx=insertPoint, values=new_values):
+                    self._contents[insertPoint:insertPoint] = new_values
+        else:
+            with self._event('update', idx=idx, new_value=value):
+                self._contents[idx] = value
 
     def __delitem__(self, idx):
-        update_idx = idx
-        if not isinstance(idx, slice):
-            update_idx = slice(idx, idx+1)
-        with self._event('update', idx=update_idx, new_value=()), \
-             self._event('del', idx=idx):
+        with self._event('del', idx=idx):
             del self._contents[idx]
 
     def append(self, value):
-        with self._event('update', idx=slice(len(self),None), new_value=(value,)), \
-             self._event('extend', (value,)):
+        with self._event('insert', idx=len(self), values=(value,)):
             self._contents.append(value)
 
     def extend(self, value):
-        with self._event('update', idx=slice(len(self),None), new_value=value), \
-             self._event('extend', value):
+        with self._event('insert', idx=len(self), values=value):
             self._contents.extend(value)
 
     def remove(self, value):

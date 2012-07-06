@@ -11,26 +11,31 @@ Rectangle {
     function z(obj, prop) { return obj ? obj[prop] : 0; }
 
     property string tagName: ""
-    property real zoomLevel: 1.5
+    property real zoomLevel: 1
     property variant tag: tagdb.loaded && view.tagName ? tagdb.getTag(view.tagName) : false
-    property variant images: view.tag ? view.tag.images : []
+    property variant images: []
     property variant image: z(list.currentItem, 'image')
 
+    onTagChanged: {
+        if (tagdb.loaded && view.tag != "")
+            images = tagdb.getImageList(view.tagName)
+    }
     Connections { target: tagdb;
         onLoadedChanged: {
-            if (tagdb.loaded) {
-                if (view.tagName == "")
-                    view.tagName = Object.keys(tagdb.tags)[0];
-            } else { view.tagName = "" }
+            view.tagName = ""
+            if (tagdb && tagdb.loaded) {
+                images = tagdb.getImageList('len(tags)==0')
+            }
         }
     }
 
     function next() { list.incrementCurrentIndex(); }
     function prev() { list.decrementCurrentIndex(); }
-    function random() { var target = Math.floor(Math.random()*list.count);
+    function show(target) {
         list.positionViewAtIndex(target, ListView.Center);
         list.currentIndex = target;
         }
+    function random() { show(Math.floor(Math.random()*list.count)); }
 
     Flickable { id: zoomed
         visible: false
@@ -46,48 +51,84 @@ Rectangle {
     }
     ListView { id: list
         model: view.images
-        anchors.fill: parent
+        width: parent.width
+        height: parent.height
+        Behavior on height { SmoothedAnimation { duration: 150 } }
         keyNavigationWraps: true
-        cacheBuffer: parent.width*2
+        cacheBuffer: width*2
         orientation: ListView.Horizontal
-        highlightMoveSpeed: view.width*5
+        highlightMoveSpeed: width*5
         highlightMoveDuration: 100
         preferredHighlightBegin: list.currentItem && list.currentItem.width
-            ? (view.width - list.currentItem.width) / 2
+            ? (list.width - list.currentItem.width) / 2
             : 0
         preferredHighlightEnd: list.preferredHighlightBegin
         highlightRangeMode: ListView.StrictlyEnforceRange
         spacing: 10
+        clip: true
         delegate: Flickable { id: listEntry
-            property variant image: listLoader.image
-            height: view.height
-            width: listLoader.width
-            contentWidth: listLoader.width
-            contentHeight: listLoader.height
+            property variant image: loader ? loader.image : 0
+            anchors { top: parent.top; bottom: parent.bottom }
+            width: view.z(loader, 'width')
+            contentWidth: view.z(loader, 'width')
+            contentHeight: view.z(loader, 'height')
             boundsBehavior: Flickable.StopAtBounds
-            ImageLoader { id: listLoader
+            ImageLoader { id: loader
                 image: modelData
                 function zoom() {
-                    if (!image || !image.size.width) return 1;
+                    if (!loader.loaded) return 1;
                     var s = image.size;
                     var aspect = s.width/s.height;
-                    var ry = view.height/s.height;
-                    var rx = view.width/s.width;
-                    if (aspect < 1 && view.zoomLevel > 1)
-                        ry = view.height/(s.height/view.zoomLevel);
+                    var ry = list.height/s.height;
+                    var rx = list.width/s.width;
+                    if (view.zoomLevel > 1)
+                        ry = list.height/(s.height/view.zoomLevel);
                     return Math.min(rx, ry);
                 }
-                width: listLoader.size.width
-                    ? Math.min(view.width, listLoader.size.width * zoom())
-                    : view.width*0.75
-                height: Math.max(view.height, listLoader.size.height * zoom());
+                width: loader.loaded
+                    ? Math.min(list.width, loader.size.width * zoom())
+                    : list.width*0.75
+                height: loader.loaded
+                    ? Math.max(list.height, loader.size.height * zoom())
+                    : list.height
             }
             onContentHeightChanged: {
-                listEntry.contentY = (listEntry.contentHeight - view.height)/2
+                listEntry.contentY = (listEntry.contentHeight - list.height)/2
             }
             MouseArea {
                 anchors.fill: parent
                 onClicked: next()
+            }
+            states: State { name: "scratch"
+                ParentChange { target: loader; parent: view }
+                PropertyChanges { target: listEntry; width: 0 }
+                PropertyChanges { target: loader;
+                    x: view.width/2-scratch.height;
+                    y: view.height * 0.7;
+                    width: scratch.height; height: scratch.height
+                }
+            }
+            transitions: Transition { from: ""; to: "scratch"
+                SequentialAnimation {
+                    PropertyAction { target: list
+                        property: "highlightRangeMode"
+                        value: ListView.NoHighlightRange; }
+                    ParallelAnimation {
+                        NumberAnimation { target: loader; duration: 200;
+                            properties: "x,y,width,height" }
+                        NumberAnimation { target: listEntry; duration: 200;
+                            properties: "width" }
+                    }
+                    ScriptAction { script: {
+                        var image = loader.image;
+                        images.remove(index);
+                        scratch.model.append({'asdf': image});
+                        loader.destroy();
+                    }}
+                    PropertyAction { target: list
+                        property: "highlightRangeMode"
+                        value: ListView.StrictlyEnforceRange; }
+                }
             }
         }
     }
@@ -127,24 +168,44 @@ Rectangle {
             if (view.state == "") {
                 Qt.quit();
             } else {
-                view.state = "";
+                if (view.state != "rearrange") 
+                    view.state = "";
+                // TODO: allow Q to undo a rearrange
             }
-        } else if (event.key == Qt.Key_Right || event.key == Qt.Key_Space) {
-            next();
-        } else if (event.key == Qt.Key_Left) {
-            prev();
-        } else if (event.key == Qt.Key_T && view.tag) {
+        } else if (event.key == Qt.Key_T) {
             view.state = (view.state == "setTags" ? "" : "setTags");
         } else if (event.key == Qt.Key_R) {
             random();
         } else if (event.key == Qt.Key_Z) {
             view.state = (view.state == "zoomed" ? "" : "zoomed");
-        } else if (event.key == Qt.Key_Up) {
-            zoomLevel += 0.25;
-        } else if (event.key == Qt.Key_Down) {
-            zoomLevel -= 0.25;
         } else if (event.key == Qt.Key_X) {
-            zoomLevel =  1.5;
+            zoomLevel =  1;
+        } else if (event.key == Qt.Key_Space) {
+            next();
+        } else if (event.key == Qt.Key_Right) {
+            next();
+        } else if (event.key == Qt.Key_Left) {
+            prev();
+        } else if (event.key == Qt.Key_Up) {
+            if (view.state == "zoomed" || event.modifiers & Qt.ShiftModifier) {
+                zoomLevel += 0.25;
+            } else if (scratch.count > 0) {
+                var scratchImages = [];
+                for (var i = 0; i < scratch.count; i++) {
+                    scratchImages.push(scratch.model.get(i).asdf);
+                }
+                scratch.model.clear();
+                var curIndex = list.currentIndex;
+                scratchClearTimer.targetIndex = curIndex;
+                images.insert(curIndex, scratchImages);
+                show(curIndex);
+            }
+        } else if (event.key == Qt.Key_Down) {
+            if (view.state == "zoomed" || event.modifiers & Qt.ShiftModifier) {
+                zoomLevel -= 0.25;
+            } else if (list.count > 0) {
+                list.currentItem.state = "scratch";
+            }
         } else {
             console.log(event.key);
             return;
@@ -152,7 +213,8 @@ Rectangle {
         event.accepted = true;
     }
     function hasTag(tagname) {
-        if (!view.image) return false;
+        if (!view.image || !view.image.tags) return false;
+        
         for (var i = 0; i < view.image.tags.length; i++) {
             var tag = view.image.tags.get(i);
             if (tag.name == tagname)
@@ -179,8 +241,8 @@ Rectangle {
         anchors { verticalCenter: parent.verticalCenter; right: parent.right }
         visible: false
         color: "#CC000000"
-        width: tagEditorList.width + 30
-        height: tagEditorList.height + 30
+        width: tagEditorList.width + 20
+        height: tagEditorList.height + 20
         Column { id: tagEditorList; Repeater {
             model: Object.keys(tagdb.tags)
             delegate: Text {
@@ -191,12 +253,31 @@ Rectangle {
                 MouseArea {
                     id: tagSelect
                     hoverEnabled: true
-                    x: -15; width: tagEditor.width
+                    x: -10; width: tagEditor.width
                     y: -5; height: parent.height+10
-                    onClicked: view.image.toggleTag(modelData)
+                    onClicked: {
+                        if (view.image.toggleTag) {
+                            view.image.toggleTag(modelData);
+                        }
+                    }
                 }
             }
         } anchors.centerIn: parent; spacing: 10 }
+    }
+    Repeater { id: scratch
+        visible: false
+        model: ListModel {}
+        anchors.bottom: parent.bottom
+        height: parent.height * 0.3
+        width: parent.width
+
+        delegate: ImageLoader { id: scratchitem
+            y: scratch.y
+            height: scratch.height
+            width: Math.min(scratch.height, scratch.width/scratch.count)
+            x: (scratch.width - width*scratch.count)/2 + width*index
+            image: asdf
+        }
     }
     states: [
     State { name: "setTags";
@@ -206,6 +287,11 @@ Rectangle {
     State { name: "zoomed";
         PropertyChanges { target: zoomed; visible: true }
         PropertyChanges { target: list; visible: false }
+    },
+    State { name: "rearrange";
+        when: scratch.model.count > 0
+        PropertyChanges { target: list; height: view.height*0.7 }
+        PropertyChanges { target: scratch; visible: true }
     }
     ]
 }
