@@ -125,7 +125,6 @@ class Tag(object):
                 if self.base is not None:
                     path = p.relpath(image.path, self.base)
                 path = path.replace('\\', '/').encode('utf-8')
-                print path, ''.join('%x' % ord(c) for c in path)
                 fp.write("%s\n" % path)
         self.dirty = False
 
