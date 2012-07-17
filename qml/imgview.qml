@@ -37,18 +37,6 @@ Rectangle {
         }
     function random() { show(Math.floor(Math.random()*list.count)); }
 
-    Flickable { id: zoomed
-        visible: false
-        anchors.fill: parent
-        contentWidth: zoomLoader.width
-        contentHeight: zoomLoader.height
-        boundsBehavior: Flickable.StopAtBounds
-        ImageLoader { id: zoomLoader
-            image: view.image
-            width: Math.max(size.width*zoomLevel, view.width)
-            height: Math.max(size.height*zoomLevel, view.height)
-        }
-    }
     ListView { id: list
         model: view.images
         width: parent.width
@@ -66,6 +54,7 @@ Rectangle {
         highlightRangeMode: ListView.StrictlyEnforceRange
         spacing: 10
         clip: true
+        Behavior on opacity { NumberAnimation { duration: 200 } }
         delegate: Flickable { id: listEntry
             property variant image: loader ? loader.image : 0
             anchors { top: parent.top; bottom: parent.bottom }
@@ -132,12 +121,106 @@ Rectangle {
             }
         }
     }
+    Flickable { id: zoomed
+        visible: false
+        interactive: false
+        x: list.currentItem
+            ? list.currentItem.x - list.contentX
+            : 0;
+        width: view.z(list.currentItem, "width")
+        onWidthChanged: console.log("zw", zoomed.width)
+        height: view.z(list.currentItem, "height")
+        contentWidth: zoomLoader.width
+        contentHeight: zoomLoader.height
+        boundsBehavior: Flickable.StopAtBounds
+        ImageLoader { id: zoomLoader
+            image: view.image
+            width: view.z(list.currentItem, "width")
+            height: view.z(list.currentItem, "height")
+            property variant activeWidth:
+                Math.max(size.width*zoomLevel, view.width)
+            property variant activeHeight:
+                Math.max(size.height*zoomLevel, view.height)
+        }
+        // contentX doesn't want to animate back to zero properly on its own
+        // track any nonzero values and use as the start for un-zoom animation:
+        property real lastContentX: 0;
+        onContentXChanged: if (zoomed.contentX) lastContentX = zoomed.contentX;
+        states: [
+        State { name: ""
+            PropertyChanges { target: zoomed; explicit: true
+                contentX: 0
+                contentY: 0
+            }
+        },
+        State { name: "active"
+            PropertyChanges { target: zoomed
+                x: 0
+                width: view.width
+                height: view.height
+                visible: true
+                interactive: true
+            }
+            PropertyChanges { target: zoomed; explicit: true
+                contentX: (zoomLoader.activeWidth - view.width) / 2
+                contentY: (zoomLoader.activeHeight - view.height) / 2
+            }
+            PropertyChanges { target: zoomLoader
+                width: zoomLoader.activeWidth
+                height: zoomLoader.activeHeight
+            }
+            PropertyChanges { target: list
+                opacity: 0
+            }
+        }
+        ]
+        transitions: [
+        Transition { from: ""; to: "active"
+            SequentialAnimation {
+                PropertyAction { target: zoomed; property: "visible" }
+                ParallelAnimation {
+                    NumberAnimation { targets: [zoomed,zoomLoader]
+                        properties: "x,width,height"
+                        duration: 200
+                    }
+                    NumberAnimation { target: zoomed
+                        properties: "contentX, contentY"
+                        duration: 200
+                    }
+                }
+                PropertyAction { target: zoomed; property: "interactive" }
+            }
+        },
+        Transition { from: "active"; to: ""
+            SequentialAnimation {
+                PropertyAction { target: zoomed; property: "interactive" }
+                ParallelAnimation {
+                    NumberAnimation { targets: [zoomed,zoomLoader]
+                        properties: "x,width,height"
+                        duration: 200
+                    }
+                    NumberAnimation { target: zoomed
+                        property: "contentY"
+                        duration: 200
+                    }
+                    NumberAnimation { target: zoomed
+                        property: "contentX"
+                        duration: 200
+                        from: zoomed.lastContentX
+                        to: 0
+                    }
+                }
+                PropertyAction { target: zoomed; property: "visible" }
+            }
+        }
+        ]
+    }
 
     Rectangle { anchors.fill: leftColumn; color: "#80000000" }
     Column { id: leftColumn
         anchors { left: parent.left; bottom: parent.bottom }
         Text { text: view.zoomLevel; color: "white" }
-        Text { text: view.tag ? list.currentIndex + "/" + list.count : "0/0"
+        Text { text: list.count ? list.currentIndex + "/" + list.count : "0/0"
             color: "white"
         }
         Repeater { id: listAllTags
@@ -173,11 +256,11 @@ Rectangle {
                 // TODO: allow Q to undo a rearrange
             }
         } else if (event.key == Qt.Key_T) {
-            view.state = (view.state == "setTags" ? "" : "setTags");
+            currentTags.state = (currentTags.state == "edit" ? "" : "edit");
         } else if (event.key == Qt.Key_R) {
             random();
         } else if (event.key == Qt.Key_Z) {
-            view.state = (view.state == "zoomed" ? "" : "zoomed");
+            zoomed.state = (zoomed.state == "active" ? "" : "active");
         } else if (event.key == Qt.Key_X) {
             zoomLevel =  1;
         } else if (event.key == Qt.Key_Space) {
@@ -196,7 +279,6 @@ Rectangle {
                 }
                 scratch.model.clear();
                 var curIndex = list.currentIndex;
-                scratchClearTimer.targetIndex = curIndex;
                 images.insert(curIndex, scratchImages);
                 show(curIndex);
             }
@@ -222,47 +304,47 @@ Rectangle {
         }
         return false;
     }
-    Rectangle { id: rightColumn
+    Rectangle { id: currentTagsBackground
         anchors { verticalCenter: parent.verticalCenter;
                   right: parent.right;}
-        color: "#80000000"
-        width: currentTagsList.width + 20;
-        height: currentTagsList.height + 20;
-        Column { id: currentTagsList
-            anchors { margins: 10; left: parent.left; top: parent.top }
-            Repeater {
-                id: tagview
-                model: view.image ? view.image.tags : []
-                delegate: Text {color: "white"; text: modelData.name}
-            }
-        }
-    }
-    Rectangle { id: tagEditor
-        anchors { verticalCenter: parent.verticalCenter; right: parent.right }
-        visible: false
         color: "#CC000000"
-        width: tagEditorList.width + 20
-        height: tagEditorList.height + 20
-        Column { id: tagEditorList; Repeater {
-            model: Object.keys(tagdb.tags)
-            delegate: Text {
-                text: modelData
-                color: tagSelect.containsMouse ? "yellow" : "white"
-                font.bold: hasTag(modelData)
-                horizontalAlignment: Text.AlignHCenter
-                MouseArea {
-                    id: tagSelect
-                    hoverEnabled: true
-                    x: -10; width: tagEditor.width
-                    y: -5; height: parent.height+10
-                    onClicked: {
-                        if (view.image.toggleTag) {
-                            view.image.toggleTag(modelData);
+        width: currentTags.width + 20;
+        height: currentTags.height + 20;
+        Column { id: currentTags
+            anchors.centerIn: parent;
+            spacing: 10;
+            Repeater {
+                id: currentTagsRepeater
+                model: view.image ? view.image.tags : []
+                delegate: Text {
+                    color: "white";
+                    text: modelData.name ? modelData.name : modelData
+                }
+                property variant editor: Component { Text {
+                    text: modelData.name ? modelData.name : modelData
+                    color: tagSelect.containsMouse ? "yellow" : "white"
+                    font.bold: hasTag(modelData)
+                    horizontalAlignment: Text.AlignHCenter
+                    MouseArea {
+                        id: tagSelect
+                        hoverEnabled: true
+                        x: -10; width: currentTagsBackground.width
+                        y: -5; height: parent.height+10
+                        onClicked: {
+                            if (view.image.toggleTag) {
+                                view.image.toggleTag(modelData);
+                            }
                         }
                     }
+                }}
+            }
+            states: State { name: "edit";
+                PropertyChanges { target: currentTagsRepeater
+                    model: Object.keys(tagdb.tags)
+                    delegate: currentTagsRepeater.editor
                 }
             }
-        } anchors.centerIn: parent; spacing: 10 }
+        }
     }
     Repeater { id: scratch
         visible: false
@@ -280,14 +362,6 @@ Rectangle {
         }
     }
     states: [
-    State { name: "setTags";
-        PropertyChanges { target: tagEditor; visible: true }
-        PropertyChanges { target: rightColumn; visible: false }
-    },
-    State { name: "zoomed";
-        PropertyChanges { target: zoomed; visible: true }
-        PropertyChanges { target: list; visible: false }
-    },
     State { name: "rearrange";
         when: scratch.model.count > 0
         PropertyChanges { target: list; height: view.height*0.7 }
