@@ -9,6 +9,8 @@ Rectangle {
     focus: true
     
     function z(obj, prop) { return obj ? obj[prop] : 0; }
+    function sorted(x) { x.sort(); return x; }
+    function info(x) { console.log(x, sorted(Object.keys(x))); }
 
     property string tagName: ""
     property real zoomLevel: 1
@@ -17,7 +19,7 @@ Rectangle {
     property variant image: z(list.currentItem, 'image')
 
     onTagChanged: {
-        if (tagdb.loaded && view.tag != "")
+        if (tagdb.loaded && view.tagName != "")
             images = tagdb.getImageList(view.tagName)
     }
     Connections { target: tagdb;
@@ -132,27 +134,25 @@ Rectangle {
         height: view.z(list.currentItem, "height")
         contentWidth: zoomLoader.width
         contentHeight: zoomLoader.height
+        contentX: view.z(list.currentItem, "contentX");
+        contentY: view.z(list.currentItem, "contentY");
         boundsBehavior: Flickable.StopAtBounds
         ImageLoader { id: zoomLoader
             image: view.image
-            width: view.z(list.currentItem, "width")
-            height: view.z(list.currentItem, "height")
-            property variant activeWidth:
+            width: list.currentItem ? list.currentItem.contentWidth : 0;
+            height: list.currentItem ? list.currentItem.contentHeight : 0;
+            property real activeWidth:
                 Math.max(size.width*zoomLevel, view.width)
-            property variant activeHeight:
+            property real activeHeight:
                 Math.max(size.height*zoomLevel, view.height)
         }
-        // contentX doesn't want to animate back to zero properly on its own
+        // contentX/Y don't want to animate back to zero properly
         // track any nonzero values and use as the start for un-zoom animation:
         property real lastContentX: 0;
-        onContentXChanged: if (zoomed.contentX) lastContentX = zoomed.contentX;
+        onContentXChanged: if (contentX && state != "") lastContentX = contentX;
+        property real lastContentY: 0
+        onContentYChanged: if (contentY && state != "") lastContentY = contentY;
         states: [
-        State { name: ""
-            PropertyChanges { target: zoomed; explicit: true
-                contentX: 0
-                contentY: 0
-            }
-        },
         State { name: "active"
             PropertyChanges { target: zoomed
                 x: 0
@@ -202,12 +202,12 @@ Rectangle {
                     NumberAnimation { target: zoomed
                         property: "contentY"
                         duration: 200
+                        from: zoomed.lastContentY
                     }
                     NumberAnimation { target: zoomed
                         property: "contentX"
                         duration: 200
                         from: zoomed.lastContentX
-                        to: 0
                     }
                 }
                 PropertyAction { target: zoomed; property: "visible" }
