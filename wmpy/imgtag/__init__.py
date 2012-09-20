@@ -14,6 +14,7 @@ from .. import _io
 from .. import _logging
 from .. import _threading
 from .. import ValueObjectMixin
+from . import tagexpr
 
 _logger, _dbg, _info, _warn = _logging.get_logging_shortcuts(__name__)
 
@@ -159,11 +160,27 @@ class TagDB(_logging.InstanceLoggingMixin,
         else:
             self.config = config
 
+        self._scanning = False
+        self._scanning_changed = threading.Condition()
+        self._cancel_scan = False
+
         self.images = {}
         self.tags = {}
 
         self._mm_tags, self._mm_images = \
             _collection.ManyToMany('set', 'checked_list')
+
+    @property
+    def scanning(self):
+        return self._scanning
+
+    @scanning.setter
+    def scanning(self, is_scanning):
+        with self._scanning_changed:
+            self._scanning = is_scanning
+            if not is_scanning:
+                self._cancel_scan = False
+            self._scanning_changed.notify_all()
     
     def _image(self, path, source=None):
         abspath = p.abspath(p.join(self.top_path, path))
@@ -196,7 +213,22 @@ class TagDB(_logging.InstanceLoggingMixin,
                 )
         return self.tags[tagname]
 
+    def stopScan(self):
+        with self._scanning_changed:
+            if not self.scanning:
+                return False
+            while self.scanning:
+                self._cancel_scan = True
+                self._scanning_changed.wait(999999)
+            assert not self.scanning
+            return True
+
     def scan(self):
+        with self._scanning_changed:
+            if self.scanning:
+                raise ValueError("Concurrent call to scan() detected")
+            else:
+                self.scanning = True
         self._dbg("scanning %s...", self.top_path)
         walk = os.walk(self.top_path, onerror=_raise)
         if not self.tags_path.startswith(self.top_path):
@@ -208,6 +240,12 @@ class TagDB(_logging.InstanceLoggingMixin,
             dirs[:] = filter(lambda d: not d.startswith('.'), dirs)
 
             for filename in files:
+                with self._scanning_changed:
+                    if self._cancel_scan:
+                        self._dbg("scan cancelled")
+                        self.scanning = False
+                        return False
+
                 path = p.join(parent, filename)
                 name, ext = p.splitext(filename)
                 if ext == '.list':
@@ -229,6 +267,9 @@ class TagDB(_logging.InstanceLoggingMixin,
 
         for tag, list_path in tagfiles.iteritems():
             self._tag(tag, list_path)
+
+        self.scanning = False
+        return True
     
     def _make_dupe_checker(self, path):
         self._dbg("reading %s to check for duplicates", path)
@@ -254,134 +295,31 @@ class TagDB(_logging.InstanceLoggingMixin,
                 else:
                     print "%s: name conflict %s" % (image, path)
 
-    def find_by_tags(self, tagexpr, **bindings):
-        tagexpr = compile(tagexpr, '<tagexpr>', 'eval')
+    def find_by_tags(self, tag_expression, **bindings):
+        tag_expression = compile(tag_expression, '<tagexpr>', 'eval')
         for tagname in self.tags:
-            bindings.setdefault(tagname, {tagname})
+            bindings.setdefault(tagname, tagexpr.Tag(tagname))
+        bindings.setdefault('untagged', tagexpr.Untagged())
+        tag_expression = eval(tag_expression, bindings)
+        images = []
         for image in self.images.itervalues():
             tags = set(image.tags)
-            bindings.update(
-                name=image.name,
-                tags=tags,
-                path=image.path,
-                )
-            result = eval(tagexpr, bindings)
-            if isinstance(result, set):
-                result = (tags == result)
-            if result:
-                yield image
+            if tag_expression.evaluate(image, tags):
+                images.append(image)
+
+        sort_tag = tag_expression.sort_tag()
+        if sort_tag is not None:
+            indices = {}
+            for i, image in enumerate(self.tags[sort_tag].image_list):
+                indices[id(image)] = i
+            images.sort(key=lambda image: indices[id(image)])
+        return images
 
     @staticmethod
     def images_to_paths(images, sort=True):
         if sort:
             images = sorted(images)
         return [image.path for image in images]
-
-    def view_tags(self, tagexpr, feh_args=(), **bindings):
-        paths = self.images_to_paths(
-                    self.find_by_tags(tagexpr, **bindings))
-
-        if len(paths) == 0:
-            print "No matching images.\n"
-            return
-
-        with _io.Pipe() as (cmd_r, cmd_w), \
-             _io.Pipe() as (info_r, info_w):
-
-            def _preexec():
-                os.close(cmd_r.fileno())
-                os.close(info_w.fileno())
-
-            tag_bindings = self.config.get('tag_bindings', {})
-            cmd = ['feh', '--info',  # remainder is info cmd def:
-                'IFS="";'
-                'exec <&%s;'
-                'echo info "%%f" >&%d;'
-                'read -r INFO;'
-                'echo "$INFO"' % (info_r.fileno(), cmd_w.fileno())]
-            for numkey, tag in tag_bindings.iteritems():
-                cmd.extend(('--action%d' % numkey,
-                    ';echo tag %s "%%f" >&%d' % (tag, cmd_w.fileno())))
-            cmd.extend(feh_args)
-            paths_on_stdin = True
-            if paths_on_stdin:
-                cmd.extend(['-f', '-'])
-                self._info('Running viewer: %s < [%d paths]',
-                    ' '.join(map(pipes.quote, cmd)), len(paths))
-            else:
-                self._info('Running viewer: %s [%d paths]',
-                    ' '.join(map(pipes.quote, cmd)), len(paths))
-                cmd.extend(paths)
-
-            viewer = sp.Popen(cmd, stdin=sp.PIPE, preexec_fn=_preexec,
-                cwd=self.top_path)
-            cmd_w.close()
-            info_r.close()
-
-            finish_cond = threading.Condition()
-            thread_err = []
-            def _notify_finish():
-                with finish_cond:
-                    if sys.exc_info() != (None, None, None):
-                        thread_err[:] = sys.exc_info()
-                    finish_cond.notify_all()
-
-            def _comm_thread_func():
-                if paths_on_stdin:
-                    input_data = '\n'.join(paths)
-                else:
-                    input_data = ''
-                viewer.communicate(input=input_data)
-                _notify_finish()
-
-            binding_desc = ' '.join(
-                '%s->%s' % (k,v)
-                for k,v in tag_bindings.items())
-            def _cmd_info(command):
-                fn = ' '.join(command[1:])
-                self._dbg("info request: %s", fn)
-                image = self.images[p.basename(fn)]
-                info_w.write('%s tags=|%s|\\n%s\n' %
-                    (image, image.tagstr, binding_desc))
-                info_w.flush()
-
-            def _cmd_tag(command):
-                tag = self._tag(command[1])
-                fn = ' '.join(command[2:])
-                image = self.images[p.basename(fn)]
-                if tag.name in image.tags:
-                    _warn("remove tag %s %s", image, tag)
-                    tag.image_list.remove(image)
-                else:
-                    _warn("add tag %s %s", image, tag)
-                    tag.image_list.append(image)
-
-            def _cmd_thread_func():
-                self._dbg('viewer command thread starting')
-                for cmdline in cmd_r:
-                    command = cmdline.strip().split(' ')
-                    if command[0] == 'info':
-                        _cmd_info(command)
-                    elif command[0] == 'tag':
-                        _cmd_tag(command)
-                    else:
-                        _warn("unknown command from viewer: %r" % cmdline)
-                _notify_finish()
-        
-            try:
-                comm_thread = _threading.WatchedThread('comm_thread',
-                    _comm_thread_func, _notify_finish)
-                comm_thread.start()
-                cmd_thread = _threading.WatchedThread('cmd_thread',
-                    _cmd_thread_func, _notify_finish)
-                cmd_thread.start()
-                _threading.WatchedThread.join_all(comm_thread, cmd_thread)
-            finally:
-                if viewer.returncode is None:
-                    os.kill(viewer.pid, 15) # TERM
-
-        if viewer.returncode != 0:
-            sys.exit(viewer.returncode)
 
     def save_dirty(self):
         for tag in self.tags.itervalues():

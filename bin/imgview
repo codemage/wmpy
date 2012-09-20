@@ -5,6 +5,7 @@ import logging
 import os, os.path
 import sys
 import threading
+import traceback
 import weakref
 
 if __name__ == '__main__':
@@ -69,7 +70,7 @@ class QTag(wmpyside.HasProperties, qt.core.Object):
 class QTaggedImage(wmpyside.HasProperties, qt.core.Object):
     name, nameChanged = wmpyside.Property(str, lambda self: self._name)
     path, pathChanged = wmpyside.Property(str, lambda self: self._path)
-    tags, tagsChanged = wmpyside.Property(qt.core.Object, lambda self: self._tags)
+    tags, tagsChanged = wmpyside.Property('QVariant', lambda self: self._tags)
     size, sizeChanged = wmpyside.SimpleProperty(qt.core.Size, "_size")
 
     def __init__(self, db, taggedImage):
@@ -123,8 +124,11 @@ class QTagDB(wmpy.InstanceLoggingMixin,
             self._db.save_dirty()
 
     def _resetTags(self):
-        self.tags = {tag.name: QTag(self, tag)
-            for tag in self._db.tags.values()}
+        if self._db is None:
+            self.tags = {}
+        else:
+            self.tags = {tag.name: QTag(self, tag)
+                for tag in self._db.tags.values()}
 
     @qt.core.Slot(str)
     def open(self, config_path):
@@ -138,7 +142,9 @@ class QTagDB(wmpy.InstanceLoggingMixin,
         self._db = imgtag.TagDB(config_path)
         def _load(self=self):
             try:
-                self._db.scan()
+                completed = self._db.scan()
+                if not completed:
+                    self._db = None
             except:
                 self._warn('failed to load', exc_info=True)
                 self.failed = str(sys.exc_info()[1])
@@ -149,25 +155,38 @@ class QTagDB(wmpy.InstanceLoggingMixin,
         thread = threading.Thread(target=_load)
         thread.daemon = True
         thread.start()
-        
+
+    @qt.core.Slot()
+    def close(self):
+        if self._db is not None and self.loading:
+            self._db.stopScan()
+        self._db = None
+        self.loaded = False
+
     scan = qt.core.Slot()(imgtag.TagDB.scan)
     save_dirty = qt.core.Slot()(imgtag.TagDB.save_dirty)
+
+    @qt.core.Slot(str, result=bool)
+    def hasTag(self, name):
+        return self.loaded and name in self._db.tags
     
-    @qt.core.Slot(str, result=QTag)
+    @qt.core.Slot(str, result="QVariant") # QTag or None
     def getTag(self, name):
         if not self.loaded:
-            raise ValueError('not loaded')
+            _warn("call to getTag when tagdb not loaded")
+            return None
         if name not in self._db.tags:
             self._db._tag(name)
             self._resetTags()
         return self._tags[name]
 
-    @qt.core.Slot(str, result=QTaggedImage)
+    @qt.core.Slot(str, result="QVariant") # QTaggedImage or None
     def getImage(self, name):
         if not self.loaded:
-            raise ValueError('not loaded')
+            _warn("call to getImage when tagdb not loaded")
+            return None
         if name not in self._db.images:
-            raise KeyError
+            return None
         if name not in self._qimages:
             image = self._db.images[name]
             self._qimages[name] = QTaggedImage(self, image)
@@ -176,14 +195,30 @@ class QTagDB(wmpy.InstanceLoggingMixin,
 
     @qt.core.Slot(str, result="QVariant")
     def getImageList(self, tagexpr):
+        print "getImageList", repr(tagexpr)
         imagelist = wmpyside.ListModel()
+        if not self.loaded:
+            return imagelist
         if tagexpr in self._db.tags:
             imagenames = self.getTag(tagexpr).images[:]
             imagelist[:] = (self.getImage(name) for name in imagenames)
         else:
-            images = self._db.find_by_tags(tagexpr)
-            imagelist[:] = (self.getImage(i.name) for i in images)
+            try:
+                images = self._db.find_by_tags(tagexpr)
+                imagelist[:] = (self.getImage(i.name) for i in images)
+            except Exception:
+                _warn("error in tagexpr", exc_info=True)
+                traceback.print_exc()
         return imagelist
+
+class ViewProxy(qt.core.Object):
+    def __init__(self, view):
+        super(ViewProxy, self).__init__()
+        self._view = weakref.ref(view)
+
+    @qt.core.Slot(result="QVariant")
+    def getView(self):
+        return self._view()
 
 class ImgView(qt.quick.View):
     qml_path = os.path.join(os.path.dirname(__file__), '..', 'qml')
@@ -193,6 +228,7 @@ class ImgView(qt.quick.View):
         self.config_path = config_path=os.path.join(tags_dir, 'imgtag.cfg')
         self.db = QTagDB()
         self.rootContext().setContextProperty('tagdb', self.db)
+        self._closed = False
 
         self.initialized = False
         self.statusChanged.connect(self.statusCheck)
@@ -203,7 +239,8 @@ class ImgView(qt.quick.View):
         if self.initialized or self.status() == qt.quick.View.Loading:
             return
         elif self.status() == qt.quick.View.Error:
-            # TODO: consider popping up an error message
+            # TODO: consider popping up an error message, use self.errors
+            # may need to listen to self.engine.warnings and self.engine.setOutputWarningsToStandardError(False)
             sys.stderr.write("Failed to load QML\n")
             self.close()
             qt.core.CoreApplication.exit(1)
@@ -214,10 +251,10 @@ class ImgView(qt.quick.View):
 
             self.setWindowTitle("ImgView")
             self.setResizeMode(qt.quick.View.SizeRootObjectToView)
-            self.engine().quit.connect(self.quit)
+            self.engine().quit.connect(self.close)
 
             self.db.open(self.config_path)
-            self.rootContext().setContextProperty('app', self)
+            self.rootContext().setContextProperty('viewProxy', ViewProxy(self))
         except:
             _warn("error loading", exc_info=True)
             self.close()
@@ -226,12 +263,9 @@ class ImgView(qt.quick.View):
 
         self.show()
 
-    @qt.core.Slot()
-    def quit(self):
-        # this prevents a segfault for some reason:
-        self.rootContext().setContextProperty('app', qt.core.Object())
+    def closeEvent(self, evt):
         self.db.save()
-        self.close()
+        self.db.close()
         qt.core.CoreApplication.quit()
 
 gen_parser = wmpy.ParserGenerator()

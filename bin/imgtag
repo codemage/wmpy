@@ -48,6 +48,112 @@ gen_parser = wmpy.ParserGenerator(ignored_args=['db'],
         metavar='name=tag[,...]', nargs='*'),
     )
 
+def view_tags(db, tagexpr, feh_args=(), **bindings):
+    paths = db.images_to_paths(
+                db.find_by_tags(tagexpr, **bindings))
+
+    if len(paths) == 0:
+        print "No matching images.\n"
+        return
+
+    with _io.Pipe() as (cmd_r, cmd_w), \
+         _io.Pipe() as (info_r, info_w):
+
+        def _preexec():
+            os.close(cmd_r.fileno())
+            os.close(info_w.fileno())
+
+        tag_bindings = db.config.get('tag_bindings', {})
+        cmd = ['feh', '--info',  # remainder is info cmd def:
+            'IFS="";'
+            'exec <&%s;'
+            'echo info "%%f" >&%d;'
+            'read -r INFO;'
+            'echo "$INFO"' % (info_r.fileno(), cmd_w.fileno())]
+        for numkey, tag in tag_bindings.iteritems():
+            cmd.extend(('--action%d' % numkey,
+                ';echo tag %s "%%f" >&%d' % (tag, cmd_w.fileno())))
+        cmd.extend(feh_args)
+        paths_on_stdin = True
+        if paths_on_stdin:
+            cmd.extend(['-f', '-'])
+            _info('Running viewer: %s < [%d paths]',
+                ' '.join(map(pipes.quote, cmd)), len(paths))
+        else:
+            _info('Running viewer: %s [%d paths]',
+                ' '.join(map(pipes.quote, cmd)), len(paths))
+            cmd.extend(paths)
+
+        viewer = sp.Popen(cmd, stdin=sp.PIPE, preexec_fn=_preexec,
+            cwd=db.top_path)
+        cmd_w.close()
+        info_r.close()
+
+        finish_cond = threading.Condition()
+        thread_err = []
+        def _notify_finish():
+            with finish_cond:
+                if sys.exc_info() != (None, None, None):
+                    thread_err[:] = sys.exc_info()
+                finish_cond.notify_all()
+
+        def _comm_thread_func():
+            if paths_on_stdin:
+                input_data = '\n'.join(paths)
+            else:
+                input_data = ''
+            viewer.communicate(input=input_data)
+            _notify_finish()
+
+        binding_desc = ' '.join(
+            '%s->%s' % (k,v)
+            for k,v in tag_bindings.items())
+        def _cmd_info(command):
+            fn = ' '.join(command[1:])
+            _dbg("info request: %s", fn)
+            image = db.images[p.basename(fn)]
+            info_w.write('%s tags=|%s|\\n%s\n' %
+                (image, image.tagstr, binding_desc))
+            info_w.flush()
+
+        def _cmd_tag(command):
+            tag = db._tag(command[1])
+            fn = ' '.join(command[2:])
+            image = db.images[p.basename(fn)]
+            if tag.name in image.tags:
+                _warn("remove tag %s %s", image, tag)
+                tag.image_list.remove(image)
+            else:
+                _warn("add tag %s %s", image, tag)
+                tag.image_list.append(image)
+
+        def _cmd_thread_func():
+            _dbg('viewer command thread starting')
+            for cmdline in cmd_r:
+                command = cmdline.strip().split(' ')
+                if command[0] == 'info':
+                    _cmd_info(command)
+                elif command[0] == 'tag':
+                    _cmd_tag(command)
+                else:
+                    _warn("unknown command from viewer: %r" % cmdline)
+            _notify_finish()
+    
+        try:
+            comm_thread = _threading.WatchedThread('comm_thread',
+                _comm_thread_func, _notify_finish)
+            comm_thread.start()
+            cmd_thread = _threading.WatchedThread('cmd_thread',
+                _cmd_thread_func, _notify_finish)
+            cmd_thread.start()
+            _threading.WatchedThread.join_all(comm_thread, cmd_thread)
+        finally:
+            if viewer.returncode is None:
+                os.kill(viewer.pid, 15) # TERM
+
+    if viewer.returncode != 0:
+        sys.exit(viewer.returncode)
+
 @gen_parser(
     feh=dict(short='f', help='arguments to viewer',
              metavar='<feh args>', action='append'),
@@ -57,7 +163,7 @@ def do_view(db, tagexpr='True', feh=('-Z', '-F'), *bindings):
     try:
         bindings = parse_bindings(db, bindings)
         feh_args = shlex.split(' '.join(feh))
-        db.view_tags(tagexpr, feh_args=feh_args, **bindings)
+        view_tags(tagexpr, feh_args=feh_args, **bindings)
     finally:
         def _save():
             # add stack frame so as not to modify exception context

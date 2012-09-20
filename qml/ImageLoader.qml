@@ -13,12 +13,13 @@ Loader { id: imagewrapper
         anchors.centerIn: parent
     }}
     Component { id: filled; Image { id: imageview
+        // parent and image may be null after component is deparented by loaded-ness change
         anchors.fill: parent
-        fillMode: parent.fillMode
+        fillMode: parent ? parent.fillMode : Image.PreserveAspectFit
         smooth: true
         cache: false
         asynchronous: true
-        source: image.path
+        source: image ? image.path : ""
         onStatusChanged: {
             if (imageview.status == Image.Ready) {
                 if (image.size.width == 0 && imageview.state == "") {
