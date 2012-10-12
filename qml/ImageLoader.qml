@@ -19,7 +19,7 @@ Loader { id: imagewrapper
         smooth: true
         cache: false
         asynchronous: true
-        source: image ? image.path : ""
+        source: image ? image.url : ""
         onStatusChanged: {
             if (imageview.status == Image.Ready) {
                 if (image.size.width == 0 && imageview.state == "") {

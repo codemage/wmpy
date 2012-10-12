@@ -68,10 +68,15 @@ class QTag(wmpyside.HasProperties, qt.core.Object):
         self._images = TagContents(db, tag)
 
 class QTaggedImage(wmpyside.HasProperties, qt.core.Object):
+    # we cheat here: changed signals are not actually fired when the underlying
+    #                image is modified which could cause problems if we ever
+    #                change an image's tags from Python without using toggleTag
     name, nameChanged = wmpyside.Property(str, lambda self: self._name)
     path, pathChanged = wmpyside.Property(str, lambda self: self._path)
     tags, tagsChanged = wmpyside.Property('QVariant', lambda self: self._tags)
     size, sizeChanged = wmpyside.SimpleProperty(qt.core.Size, "_size")
+    url, urlChanged = wmpyside.Property(qt.core.Url, lambda self:
+        qt.core.Url.fromLocalFile(self._path))
 
     def __init__(self, db, taggedImage):
         qt.core.Object.__init__(self)
@@ -84,8 +89,13 @@ class QTaggedImage(wmpyside.HasProperties, qt.core.Object):
         
     def clear(self, _ref=None):
         self._name = ''
+        self.nameChanged.emit()
         self._path = 'nothing_loaded.png'
+        self.pathChanged.emit()
+        self.urlChanged.emit()
         self._tags = None
+        self.tagsChanged.emit()
+        self.size = qt.core.Size(0,0)
 
     @qt.core.Slot(str)
     def toggleTag(self, name):
@@ -109,17 +119,8 @@ class QTagDB(wmpy.InstanceLoggingMixin,
     def __init__(self, startingTagExpr, *args, **kw):
         qt.core.Object.__init__(self, *args, **kw)
         self.startingTagExpr = startingTagExpr
-        self.clear()
-
-    @qt.core.Slot()
-    def clear(self):
-        self.loading = False
-        self.loaded = False
-        self.failed = ''
         self._db = None
-        self.tags = {}
-        self.tagNames = []
-        self._qimages = {}
+        self.close()
 
     def save(self):
         if self.loaded:
@@ -138,7 +139,6 @@ class QTagDB(wmpy.InstanceLoggingMixin,
             raise ValueError("already loading")
         if self._loaded:
             self.clear()
-            return
 
         self.loading = True
         self._db = imgtag.TagDB(config_path)
@@ -163,7 +163,15 @@ class QTagDB(wmpy.InstanceLoggingMixin,
         if self._db is not None and self.loading:
             self._db.stopScan()
         self._db = None
+        self.loading = False
         self.loaded = False
+        self.failed = ''
+        self.tags = {}
+        self.tagNames = []
+        if hasattr(self, '_qimages'):
+            for image in self._qimages.values():
+                image.clear()
+        self._qimages = {}
 
     scan = qt.core.Slot()(imgtag.TagDB.scan)
     save_dirty = qt.core.Slot()(imgtag.TagDB.save_dirty)
@@ -204,6 +212,7 @@ class QTagDB(wmpy.InstanceLoggingMixin,
         if tagexpr in self._db.tags:
             imagenames = self.getTag(tagexpr).images[:]
             imagelist[:] = (self.getImage(name) for name in imagenames)
+            imagelist[5:] = []
         else:
             try:
                 images = self._db.find_by_tags(tagexpr)

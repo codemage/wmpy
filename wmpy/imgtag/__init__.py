@@ -97,7 +97,7 @@ class Tag(object):
             _info('reloading tag %s from %s', self.name, self.list_path)
         seen_names = set()
         new_image_list = []
-        with file(self.list_path, 'rb') as fp:
+        with open(self.list_path, 'rb') as fp:
             for line in fp:
                 line = str(line.strip(), 'utf-8')
                 if len(line) == 0:
@@ -120,13 +120,13 @@ class Tag(object):
             _info("Tag list for %s unchanged", self.name)
             return
         _info("Saving tag list for %s to %s", self.name, self.list_path)
-        with file(self.list_path, 'wb') as fp:
+        with open(self.list_path, 'wb') as fp:
             for image in self.image_list:
                 path = image.path
                 if self.base is not None:
                     path = p.relpath(image.path, self.base)
                 path = path.replace('\\', '/').encode('utf-8')
-                fp.write("%s\n" % path)
+                fp.write(path+b'\n')
         self.dirty = False
 
     def __str__(self):
@@ -273,11 +273,11 @@ class TagDB(_logging.InstanceLoggingMixin,
     
     def _make_dupe_checker(self, path):
         self._dbg("reading %s to check for duplicates", path)
-        with file(path, 'rb') as fp:
+        with open(path, 'rb') as fp:
             data = fp.read()
         def _do_check(dupe):
             self._dbg("comparing %s to %s", path, dupe)
-            with file(dupe, 'rb') as fp:
+            with open(dupe, 'rb') as fp:
                 dupe_data = fp.read()
             return data == dupe_data
         return _do_check
