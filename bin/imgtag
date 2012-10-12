@@ -53,7 +53,7 @@ def view_tags(db, tagexpr, feh_args=(), **bindings):
                 db.find_by_tags(tagexpr, **bindings))
 
     if len(paths) == 0:
-        print "No matching images.\n"
+        print("No matching images.\n")
         return
 
     with _io.Pipe() as (cmd_r, cmd_w), \
@@ -70,7 +70,7 @@ def view_tags(db, tagexpr, feh_args=(), **bindings):
             'echo info "%%f" >&%d;'
             'read -r INFO;'
             'echo "$INFO"' % (info_r.fileno(), cmd_w.fileno())]
-        for numkey, tag in tag_bindings.iteritems():
+        for numkey, tag in tag_bindings.items():
             cmd.extend(('--action%d' % numkey,
                 ';echo tag %s "%%f" >&%d' % (tag, cmd_w.fileno())))
         cmd.extend(feh_args)
@@ -107,7 +107,7 @@ def view_tags(db, tagexpr, feh_args=(), **bindings):
 
         binding_desc = ' '.join(
             '%s->%s' % (k,v)
-            for k,v in tag_bindings.items())
+            for k,v in list(tag_bindings.items()))
         def _cmd_info(command):
             fn = ' '.join(command[1:])
             _dbg("info request: %s", fn)
@@ -176,7 +176,7 @@ def do_view(db, tagexpr='True', feh=('-Z', '-F'), *bindings):
 @gen_parser(
     dupes=dict(short='d', action='store_true',
                help='only show duplicated images'),
-    long=dict(short='l', action='store_true',
+    int=dict(short='l', action='store_true',
                help='list by name, with tags and path'),
     )
 def do_ls(db, tagexpr='True', dupes=False, long=False, *bindings):
@@ -186,13 +186,13 @@ def do_ls(db, tagexpr='True', dupes=False, long=False, *bindings):
         for image in sorted(db.find_by_tags(tagexpr, **bindings)):
             if dupes and len(image.paths) == 1:
                 continue
-            if long:
+            if int:
                 duplicates = [' + %s' % d for d in image.paths if d != image.path]
                 dupe_str = ''.join(duplicates)
-                print "%s\t|%s|\t%s%s" % (image.name, image.tagstr, image.path, dupe_str)
+                print("%s\t|%s|\t%s%s" % (image.name, image.tagstr, image.path, dupe_str))
             else:
-                print os.path.relpath(image.path)
-    except IOError, ioerr:
+                print(os.path.relpath(image.path))
+    except IOError as ioerr:
         if ioerr.errno != errno.EPIPE: # if EPIPE, don't care
             raise
 
@@ -217,14 +217,14 @@ def do_debug(db):
     code.interact(local=dict(db=db))
 
 actions = {name[3:].replace('_', '-'): func
-    for name, func in globals().iteritems()
+    for name, func in globals().items()
     if name.startswith('do_') and hasattr(func, 'parser')}
 
 @gen_parser(
     parser_args=dict(add_help=False, prog=sys.argv[0]),
     ignore=['argv'],
     cfg=dict(short='c', help='config file to use', metavar='<imgtag.cfg>'),
-    action=dict(nargs='?', choices=actions.keys()),
+    action=dict(nargs='?', choices=list(actions.keys())),
     help=dict(short='h', action='store_true',
               help='show this help message and exit')
     )
@@ -237,14 +237,14 @@ def main(cfg='imgtag.cfg', action=None, help=False, argv=[]):
             # is good for print_usage(); this is better for long help:
             main.args['action'].metavar = '<action>'
             main.parser.print_help()
-            print "\n<action> may be any of:"
-            for name, action in actions.iteritems():
-                print "  %s: %s" % (name, action.__doc__)
+            print("\n<action> may be any of:")
+            for name, action in actions.items():
+                print("  %s: %s" % (name, action.__doc__))
                 usage = action.parser.format_usage()
                 usage = usage.replace(' %s' % sys.argv[0], '')
                 usage = re.sub('\n +', " ", usage).replace(' [-h]', '')
-                print "     ", usage,
-        print
+                print("     ", usage, end=' ')
+        print()
         return 0
     elif action is None:
         main.parser.print_usage()

@@ -2,7 +2,7 @@
 
 Copyright (c) 2012 Walter Mundt; see LICENSE file for details.
 """
-from __future__ import absolute_import
+
 
 import re
 import functools
@@ -25,7 +25,7 @@ def nat_sort_key(val):
         cases.
     """
     split_val = _grouped_digits_re.split(str(val))
-    for i in xrange(1, len(split_val), 2):
+    for i in range(1, len(split_val), 2):
         split_val[i] = int(split_val[i])
     start = 1 if split_val[0] == '' else 0
     end = -1 if split_val[-1] == '' else None
@@ -59,8 +59,8 @@ class ValueObjectMixin(object):
 class weakmethod(object):
     """ Converts a bound method to one with a weakly-referenced 'self'. """
     def __init__(self, method, weakref_cb):
-        self.obj = weakref.ref(method.im_self, weakref_cb)
-        self.method = method.im_func
+        self.obj = weakref.ref(method.__self__, weakref_cb)
+        self.method = method.__func__
 
     def __call__(self, *args, **kw):
         self.method(self.obj(), *args, **kw)

@@ -85,9 +85,7 @@ class WatchedThread(threading.Thread):
                 if self.exc_info is None:
                     return # it went away while getting the lock
                 try:
-                    raise self.exc_info[0], \
-                          self.exc_info[1], \
-                          self.exc_info[2]
+                    raise self.exc_info[0](self.exc_info[1]).with_traceback(self.exc_info[2])
                 finally:
                     self.exc_info = None # clear ref cycle
 

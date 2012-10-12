@@ -17,7 +17,7 @@ class Expr(object):
     def __sub__(self, other):
         return And(self, Not(other))
 
-    def __nonzero__(self):
+    def __bool__(self):
         raise ValueError("use &, |, and ~ for logic in tag expressions")
 
 class Tag(Expr):

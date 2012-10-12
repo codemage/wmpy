@@ -27,7 +27,7 @@ class WatchableList(watchable.Mixin, object):
         if isinstance(idx, slice):
             value = list(value)
             idx_bounds = idx.indices(len(self))
-            indices = xrange(*idx_bounds)
+            indices = range(*idx_bounds)
             if len(indices) == len(value):
                 with self._event('update', idx=idx, new_value=value):
                     self._contents[idx] = value
@@ -220,7 +220,7 @@ class _MMList(_ManyToManyCollection):
 class _MMCheckedList(_MMList):
     @classmethod
     def _setup(cls):
-        for k, v in _MMList.__dict__.items():
+        for k, v in list(_MMList.__dict__.items()):
             if isinstance(v, types.FunctionType):
                 _dbg('adding uniqueness check to %s.%s', cls.__name__, k)
                 def make_check_and_do(k=k, v=v):
@@ -323,13 +323,13 @@ class _ManyToManySide(object):
     def __len__(self):
         return len(self._contents)
     def __iter__(self):
-        return iter(self._contents.iteritems())
+        return iter(self._contents.items())
     def keys(self):
-        return self._contents.iterkeys()
+        return iter(self._contents.keys())
     def values(self):
-        return self._contents.itervalues()
+        return iter(self._contents.values())
     def items(self):
-        return self._contents.iteritems()
+        return iter(self._contents.items())
 
 class ManyToMany(object):
     def __init__(self, left_kind='set', right_kind='set'):

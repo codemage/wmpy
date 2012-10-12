@@ -99,7 +99,7 @@ class Tag(object):
         new_image_list = []
         with file(self.list_path, 'rb') as fp:
             for line in fp:
-                line = unicode(line.strip(), 'utf-8')
+                line = str(line.strip(), 'utf-8')
                 if len(line) == 0:
                     continue
 
@@ -150,13 +150,13 @@ class TagDB(_logging.InstanceLoggingMixin,
     def __init__(self, config_path=None, config=None):
         _logging.InstanceLoggingMixin.__init__(self)
         if config_path is None:
-            self.config_path = p.abspath(u'./imgtag.cfg')
+            self.config_path = p.abspath('./imgtag.cfg')
         else:
-            self.config_path = p.abspath(unicode(config_path))
+            self.config_path = p.abspath(str(config_path))
         if config is None:
             self.config = {}
             self._dbg("loading configuration from %s", config_path)
-            execfile(self.config_path, self.config)
+            exec(compile(open(self.config_path).read(), self.config_path, 'exec'), self.config)
         else:
             self.config = config
 
@@ -237,7 +237,7 @@ class TagDB(_logging.InstanceLoggingMixin,
 
         tagfiles = {}
         for parent, dirs, files in walk:
-            dirs[:] = filter(lambda d: not d.startswith('.'), dirs)
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
 
             for filename in files:
                 with self._scanning_changed:
@@ -265,7 +265,7 @@ class TagDB(_logging.InstanceLoggingMixin,
                 else:
                     _warn("unrecognized file: %s", path)
 
-        for tag, list_path in tagfiles.iteritems():
+        for tag, list_path in tagfiles.items():
             self._tag(tag, list_path)
 
         self.scanning = False
@@ -283,17 +283,17 @@ class TagDB(_logging.InstanceLoggingMixin,
         return _do_check
 
     def print_dupes(self, delete=False):
-        for image in self.images.itervalues():
+        for image in self.images.values():
             check = self._make_dupe_checker(image.path)
             for path in image.paths:
                 if path == image.path:
                     continue
                 if check:
-                    print "%s: duplicate at %s" % (image, path)
+                    print("%s: duplicate at %s" % (image, path))
                     if delete:
                         os.unlink(path)
                 else:
-                    print "%s: name conflict %s" % (image, path)
+                    print("%s: name conflict %s" % (image, path))
 
     def find_by_tags(self, tag_expression, **bindings):
         tag_expression = compile(tag_expression, '<tagexpr>', 'eval')
@@ -302,7 +302,7 @@ class TagDB(_logging.InstanceLoggingMixin,
         bindings.setdefault('untagged', tagexpr.Untagged())
         tag_expression = eval(tag_expression, bindings)
         images = []
-        for image in self.images.itervalues():
+        for image in self.images.values():
             tags = set(image.tags)
             if tag_expression.evaluate(image, tags):
                 images.append(image)
@@ -322,13 +322,13 @@ class TagDB(_logging.InstanceLoggingMixin,
         return [image.path for image in images]
 
     def save_dirty(self):
-        for tag in self.tags.itervalues():
+        for tag in self.tags.values():
             try:
                 tag.save()
             except Exception:  # pylint: disable=W0703
                 _info("Error saving %s to %s", tag, tag.list_path,
                     exc_info=True)
-        if any(tag.dirty for tag in self.tags.itervalues()):
+        if any(tag.dirty for tag in self.tags.values()):
             ns = globals().copy()
             ns.update(locals())
             import code

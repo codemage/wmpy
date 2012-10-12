@@ -1,5 +1,5 @@
 """ wmpy._proc -- tools for dealing with subprocesses """
-from __future__ import absolute_import
+
 
 import errno
 import logging
@@ -104,7 +104,7 @@ class Cmd(_logging.InstanceLoggingMixin):
                 kw_desc[fdarg] = fd
         preexec_fn = kw_desc.pop('preexec_fn', None)
         if preexec_fn is not None:
-            kw_desc['preexec_fn'] = preexec_fn.func_name + '()'
+            kw_desc['preexec_fn'] = preexec_fn.__name__ + '()'
         return kw_desc
 
     def run(self, stdin_data=''):
@@ -118,7 +118,7 @@ class Cmd(_logging.InstanceLoggingMixin):
             raise CmdException(proc, stdout, stderr,
                 "Error running {}".format(self))
         if stderr:
-            print stderr
+            print(stderr)
         return stdout
 
     def __or__(self, other):
@@ -375,7 +375,7 @@ class PopenPipeline(_io.ClosingContextMixin,
                 written = os.write(fd, self.stdin_data[:select.PIPE_BUF])
                 #self._dbg('%d bytes written to stdin', written)
                 self.stdin_data = self.stdin_data[written:]
-            except IOError, exc:
+            except IOError as exc:
                 if exc.errno != errno.EAGAIN:
                     raise
 
@@ -389,7 +389,7 @@ class PopenPipeline(_io.ClosingContextMixin,
                 self._close_pipe(fp)
             else:
                 read_data_list.append(data)
-        do_read.func_name = 'read_stderr' if fp is self.stderr \
+        do_read.__name__ = 'read_stderr' if fp is self.stderr \
                             else 'read_stdout'
         return do_read
 
@@ -428,14 +428,14 @@ def _main():
         #pipeline = pipeline.update(stderr=sp.PIPE)
         try:
             cmd_output = cmd.run(stdin_data)
-            print "%r => %s => %r" % (stdin_data, cmd, cmd_output)
-        except CmdException, exc:
+            print("%r => %s => %r" % (stdin_data, cmd, cmd_output))
+        except CmdException as exc:
             if isinstance(cmd, CmdPipeline):
                 returncode = [p.returncode for p in exc.proc.procs]
             else:
                 returncode = exc.proc.returncode
-            print "%s exit %s => out=%r err=%r" % (cmd,
-                returncode, exc.stdout, exc.stderr)
+            print("%s exit %s => out=%r err=%r" % (cmd,
+                returncode, exc.stdout, exc.stderr))
 
     say_hello = Cmd('echo', 'hello')
     cat = Cmd('cat')

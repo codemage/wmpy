@@ -90,10 +90,10 @@ class QTaggedImage(wmpyside.HasProperties, qt.core.Object):
     @qt.core.Slot(str)
     def toggleTag(self, name):
         if name in self._image.tags:
-            print "removing tag %s from %s" % (name, self.name)
+            print("removing tag %s from %s" % (name, self.name))
             self._image.tags.remove(name)
         else:
-            print "adding tag %s to %s" % (name, self.name)
+            print("adding tag %s to %s" % (name, self.name))
             self._image.tags.append(name)
         self.tagsChanged.emit()
 
@@ -130,7 +130,7 @@ class QTagDB(wmpy.InstanceLoggingMixin,
             self.tags = {}
         else:
             self.tags = {tag.name: QTag(self, tag)
-                for tag in self._db.tags.values()}
+                for tag in list(self._db.tags.values())}
 
     @qt.core.Slot(str)
     def open(self, config_path):
@@ -197,7 +197,7 @@ class QTagDB(wmpy.InstanceLoggingMixin,
 
     @qt.core.Slot(str, result="QVariant")
     def getImageList(self, tagexpr):
-        print "getImageList", repr(tagexpr)
+        print("getImageList", repr(tagexpr))
         imagelist = wmpyside.ListModel()
         if not self.loaded:
             return imagelist

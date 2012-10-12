@@ -150,15 +150,15 @@ def grammar():
 
 def _main():
     import readline  # pylint: disable=W0612
-    print 'wmpy.shell %s.%s.%s' % VERSION
+    print('wmpy.shell %s.%s.%s' % VERSION)
     while True:
         try:
-            line = raw_input('wmpy.shell $ ')
+            line = input('wmpy.shell $ ')
             parsed = grammar['ShellLine'].parse_string(line)
-            print ' '.join(map(str, parsed))
+            print(' '.join(map(str, parsed)))
         except parcon.ParseException as ex:
-            print ex
-            print
+            print(ex)
+            print()
         except (EOFError, KeyboardInterrupt):
-            print
+            print()
             return

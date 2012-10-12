@@ -46,7 +46,7 @@ class ArgSpec(object):
             self.defaults = {}
         else:
             defaulted_args = self.args[-len(defaults):]
-            self.defaults = dict(zip(defaulted_args, defaults))
+            self.defaults = dict(list(zip(defaulted_args, defaults)))
 
     def make_call_args(self, arguments):
         args = []
@@ -136,7 +136,7 @@ class ParserGenerator(object):
         return {
             name: (info if isinstance(info, dict)
                    else dict(action='store_const', const=info))
-            for name, info in arguments.iteritems() }
+            for name, info in arguments.items() }
 
     def __call__(self, ignore=None, **arguments):
         """ This actually implements the decorator. """
@@ -162,7 +162,7 @@ class ParserGenerator(object):
             or argspec.keywords is not None), \
             "%s not in args %s" % (flag, argspec.positionals)
         
-        for k, v in self.common_options.get(flag, {}).iteritems():
+        for k, v in self.common_options.get(flag, {}).items():
             info.setdefault(k, v)
 
         if flag in argspec.defaults:
@@ -226,7 +226,7 @@ class ParserGenerator(object):
                     arg, arguments.pop(arg))
 
         # the rest ought to be **kw params, for which don't care about ordering
-        for flag, info in arguments.iteritems():
+        for flag, info in arguments.items():
             self._add_arg(argspec, parser, flag, info)
 
         # we have a parser, build parse_and_call

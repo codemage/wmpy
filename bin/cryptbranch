@@ -103,7 +103,7 @@ def mktree_recursive(tree):
             subtrees.setdefault(head, []).append( (mode, sha, tail) )
         else:
             local_tree.append('%s blob %s\t%s\0' % (mode, sha, path))
-    for head, subtree in subtrees.iteritems():
+    for head, subtree in subtrees.items():
         sub_sha = mktree_recursive(subtree)
         local_tree.append('040000 tree %s\t%s\0' % (sub_sha, head))
     local_tree = ''.join(local_tree)
@@ -139,7 +139,7 @@ def decryptbranch(cipherbranch, clearbranch):
                           GIT_COMMITTER_DATE=committer_date)
     out_commit_sha = git('commit-tree',out_tree_sha,*parents,env=commit_env).run(commit_msg).strip()
     if out_commit_sha != orig_sha:
-        print "Warning: original commit %s decrypted to %s" % (orig_sha, out_commit_sha)
+        print("Warning: original commit %s decrypted to %s" % (orig_sha, out_commit_sha))
     git('update-ref','-m','decryptbranch','refs/heads/'+clearbranch,out_commit_sha).run()
 
 def load_password():

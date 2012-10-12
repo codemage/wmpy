@@ -19,5 +19,5 @@ pw = ''.join([random.choice(string.printable) for i in range(128)])
 gnomekeyring.set_network_password_sync('login', 'waltermundt', 'homesync',
                              None, None, None, None, 0, salt+pw)
 
-print salt+pw
+print(salt+pw)
 

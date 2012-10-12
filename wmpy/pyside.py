@@ -1,4 +1,4 @@
-from PySide import QtCore, QtDeclarative, QtGui
+from .PySide import QtCore, QtDeclarative, QtGui
 
 from ._collection import WatchableList
 from . import _logging
@@ -43,7 +43,7 @@ class Property(object):
     """
 
     def _fixup_single(self, typename, dct, qname):
-        for key, val in dct.iteritems():
+        for key, val in dct.items():
             if val is self:
                 self.name = key
             elif val is self._signal:
@@ -88,7 +88,7 @@ class PropertyMeta(type(qt.core.QObject)):
     def __new__(mcls, name, bases, dct):
         props = {}
         qtprops = {}
-        for key, val in dct.items():
+        for key, val in list(dct.items()):
             if isinstance(val, Property):
                 val._fixup_single(name, dct, key)
          
@@ -97,8 +97,8 @@ class PropertyMeta(type(qt.core.QObject)):
                 base for base in bases if base is not HasProperties)
         return super(PropertyMeta, mcls).__new__(mcls, name, bases, dct)
 
-class HasProperties(qt.core.Object):
-    __metaclass__ = PropertyMeta
+class HasProperties(qt.core.Object, metaclass=PropertyMeta):
+    pass
 
 class SimpleProperty(Property):
 

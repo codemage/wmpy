@@ -89,7 +89,7 @@ class WatchableMixin(object):
     def _make_gen_begin(self, listener_gen, instance_list):
         def _gen_begin(watchable, eventname, **kw):
             gen_instance = listener_gen(watchable, eventname, **kw)
-            gen_instance.next()
+            next(gen_instance)
             instance_list.append(gen_instance)
         return _gen_begin
 
@@ -167,7 +167,7 @@ def method(eventname):
                 evt.set_result(args=args, kw=kw, result=result)
             return result
         return watchable_method
-    if callable(eventname):
+    if isinstance(eventname, collections.Callable):
         func = eventname
         eventname = func.__name__
         return make_watchable_method(func)

@@ -1,4 +1,4 @@
-from __future__ import absolute_import
+
 
 import sys
 import os
@@ -32,13 +32,13 @@ def db():
         tags = {
             tag.name: dict(
                 source=tag.list_path,
-            ) for tag in app.db.tags.values()},
+            ) for tag in list(app.db.tags.values())},
         images = {
             image.name: dict(
                 path=image.path,
                 also=[path for path in image.paths if path != image.path],
                 tags=list(image.tags))
-            for image in app.db.images.values()},
+            for image in list(app.db.images.values())},
         )
     return flask.jsonify(data)
 
