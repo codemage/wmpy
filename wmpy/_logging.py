@@ -5,13 +5,6 @@ import logging
 import types
 import sys
 
-def _patched_findCaller(_logger):
-    for frame in inspect.stack():
-        if 'logging' not in frame[1]:
-            return frame[1:4]
-    return None
-logging.Logger.findCaller = _patched_findCaller
-
 def get_logging_shortcuts(name):
     """ Returns a logger, along with bound versions of its debug, warning,
         and error methods.
@@ -89,9 +82,9 @@ class automethod(object):
     
     def __get__(self, instance, owner):
         if instance is None:
-            return types.MethodType(self.func, owner, type(owner))
+            return types.MethodType(self.func, owner)
         else:
-            return types.MethodType(self.func, instance, owner)
+            return types.MethodType(self.func, instance)
 
 class InstanceLoggingMixin(object):
     """ Makes a _logger property available that can be used to log in either

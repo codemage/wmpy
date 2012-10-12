@@ -1,4 +1,4 @@
-from .PySide import QtCore, QtDeclarative, QtGui
+from PySide import QtCore, QtDeclarative, QtGui
 
 from ._collection import WatchableList
 from . import _logging
