@@ -10,13 +10,13 @@ Rectangle {
     color: "black"
     width: 500
     height: 500
-    
+
     function z(obj, prop) { return obj ? obj[prop] : 0; }
     function sorted(x) { x.sort(); return x; }
     function info(x) { console.log(x, sorted(Object.keys(x))); }
 
     property string tagName: ""
-    property string tagExpr: "untagged"
+    property string tagExpr: tagdb.startingTagExpr
     property real zoomLevel: 1
     property variant tag: tagdb.loaded && view.tagName ? tagdb.getTag(view.tagName) : false
     property variant images: []
@@ -228,11 +228,12 @@ Rectangle {
         ]
     }
 
-    Rectangle { anchors.fill: leftColumn; color: "#80000000" }
+    Rectangle { anchors.fill: leftColumn; color: "#80000000"; visible: leftColumn.visible; }
     // ^ not a child of leftColumn because leftColumn is sized based on its children
     Column { id: leftColumn
         anchors { left: parent.left; bottom: parent.bottom }
-        Text { text: view.zoomLevel; color: "white" }
+        visible: tagdb.loaded
+        Text { text: "Zoom: " + view.zoomLevel; color: "white" }
         Text { text: list.count ? list.currentIndex + "/" + list.count : "0/0"
             color: "white"
         }
@@ -276,7 +277,7 @@ Rectangle {
     }
     function hasTag(tagname) {
         if (!view.image || !view.image.tags) return false;
-        
+
         for (var i = 0; i < view.image.tags.length; i++) {
             var tag = view.image.tags.get(i);
             if (tag.name == tagname)
@@ -357,7 +358,7 @@ Rectangle {
             if (view.state == "") {
                 Qt.quit();
             } else {
-                if (view.state != "rearrange") 
+                if (view.state != "rearrange")
                     view.state = "";
                 // TODO: allow Q to undo a rearrange
             }

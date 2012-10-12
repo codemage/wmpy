@@ -104,9 +104,11 @@ class QTagDB(wmpy.InstanceLoggingMixin,
     loaded, loadedChanged = wmpyside.SimpleProperty(bool, '_loaded')
     failed, failedChanged = wmpyside.SimpleProperty(str, '_failed')
     tags, tagsChanged = wmpyside.SimpleProperty('QVariantMap', '_tags')
+    startingTagExpr, startingTagExprChanged = wmpyside.SimpleProperty(str, '_startingTagExpr')
 
-    def __init__(self, *args, **kw):
+    def __init__(self, startingTagExpr, *args, **kw):
         qt.core.Object.__init__(self, *args, **kw)
+        self.startingTagExpr = startingTagExpr
         self.clear()
 
     @qt.core.Slot()
@@ -223,11 +225,12 @@ class ViewProxy(qt.core.Object):
 class ImgView(qt.quick.View):
     qml_path = os.path.join(os.path.dirname(__file__), '..', 'qml')
 
-    def __init__(self, tags_dir, *args, **kw):
+    def __init__(self, tags_dir, starting_tagexpr, *args, **kw):
         qt.quick.View.__init__(self, *args, **kw)
         self.config_path = config_path=os.path.join(tags_dir, 'imgtag.cfg')
-        self.db = QTagDB()
+        self.db = QTagDB(starting_tagexpr)
         self.rootContext().setContextProperty('tagdb', self.db)
+        self.rootContext().setContextProperty('viewProxy', ViewProxy(self))
         self._closed = False
 
         self.initialized = False
@@ -254,7 +257,6 @@ class ImgView(qt.quick.View):
             self.engine().quit.connect(self.close)
 
             self.db.open(self.config_path)
-            self.rootContext().setContextProperty('viewProxy', ViewProxy(self))
         except:
             _warn("error loading", exc_info=True)
             self.close()
@@ -271,8 +273,8 @@ class ImgView(qt.quick.View):
 gen_parser = wmpy.ParserGenerator()
 
 @gen_parser()
-def main(tags_dir='.'):
-    view = ImgView(tags_dir)
+def main(tags_dir='.', starting_tagexpr='untagged'):
+    view = ImgView(tags_dir, starting_tagexpr)
     return qt.core.CoreApplication.exec_()
 
 if __name__ == '__main__':
