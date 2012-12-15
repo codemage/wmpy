@@ -16,6 +16,7 @@ to make it work, great, but for now I am not going to bother documenting it prop
 """
 
 import errno
+import itertools
 import logging
 import os
 import os.path
@@ -173,10 +174,19 @@ def do_view(db, tagexpr='True', feh=('-Z', '-F'), *bindings):
                 pass
         _save()
 
+@gen_parser
+def do_dupes(db):
+    for entry in db.find_dupes():
+        images = set(entry.values())
+        if len(images) > 1:
+            for image in images:
+                print(list(image.tags), ascii(image.name))
+            print("-----------------------------")
+
 @gen_parser(
     dupes=dict(short='d', action='store_true',
                help='only show duplicated images'),
-    int=dict(short='l', action='store_true',
+    long=dict(short='l', action='store_true',
                help='list by name, with tags and path'),
     )
 def do_ls(db, tagexpr='True', dupes=False, long=False, *bindings):

@@ -212,7 +212,6 @@ class QTagDB(wmpy.InstanceLoggingMixin,
         if tagexpr in self._db.tags:
             imagenames = self.getTag(tagexpr).images[:]
             imagelist[:] = (self.getImage(name) for name in imagenames)
-            imagelist[5:] = []
         else:
             try:
                 images = self._db.find_by_tags(tagexpr)
@@ -248,15 +247,15 @@ class ImgView(qt.quick.View):
             os.path.join(self.qml_path, 'imgview.qml')))
 
     def statusCheck(self):
-        if self.initialized or self.status() == qt.quick.View.Loading:
-            return
-        elif self.status() == qt.quick.View.Error:
+        if self.status() == qt.quick.View.Error:
             # TODO: consider popping up an error message, use self.errors
             # may need to listen to self.engine.warnings and self.engine.setOutputWarningsToStandardError(False)
             sys.stderr.write("Failed to load QML\n")
             self.close()
             qt.core.CoreApplication.exit(1)
             sys.exit(1)
+        elif self.initialized or self.status() == qt.quick.View.Loading:
+            return
 
         try:
             assert self.status() == qt.quick.View.Ready
@@ -272,6 +271,7 @@ class ImgView(qt.quick.View):
             qt.core.CoreApplication.exit(1)
             sys.exit(1)
 
+        self.initialized = True
         self.show()
 
     def closeEvent(self, evt):
@@ -284,7 +284,10 @@ gen_parser = wmpy.ParserGenerator()
 @gen_parser()
 def main(tags_dir='.', starting_tagexpr='untagged'):
     view = ImgView(tags_dir, starting_tagexpr)
-    return qt.core.CoreApplication.exec_()
+    try:
+        return qt.core.CoreApplication.exec_()
+    finally:
+        view.destroy()
 
 if __name__ == '__main__':
     app = qt.gui.Application(sys.argv)

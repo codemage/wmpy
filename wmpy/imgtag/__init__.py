@@ -1,10 +1,10 @@
+import collections
 import functools
 import itertools
 import os
 from os import path as p
 import pipes
 import stat
-import subprocess as sp
 import sys
 import threading
 import weakref
@@ -134,32 +134,56 @@ class Tag(object):
 
 class TagDB(_logging.InstanceLoggingMixin,
             object):
+    default_config = {
+        'ignore_extensions': {
+            '.rar', '.zip', '.db', '.orig', '.txt', '.cfg', '.swp', '.hashes',
+            '.mp3', '.doc', '.swf', '.rtf',  '.pdf', '.odt', ''
+        },
+        'taggable_extensions': {'.jpg', '.jpeg', '.png', '.gif'}
+    }
+
     @property
     def config_dir(self):
         return p.dirname(self.config_path)
-    def _dir_from_cfg(self, name, default='.'):
+    def _path_from_cfg(self, name, default='.'):
         rv = p.join(self.config_dir, self.config.get(name, default))
         return p.abspath(rv)
     @property
     def top_path(self):
-        return self._dir_from_cfg('image_path')
+        return self._path_from_cfg('image_path')
     @property
     def tags_path(self):
-        return self._dir_from_cfg('tags_path')
+        return self._path_from_cfg('tags_path', p.join(self.top_path, 'imgtag'))
+    @property
+    def _hash_cache_path(self):
+        return self._path_from_cfg('hash_cache', p.join(self.tags_path, '.hashes'))
 
-    def __init__(self, config_path=None, config=None):
+    def __init__(self, config_path='./imgtag.cfg', config=None):
         _logging.InstanceLoggingMixin.__init__(self)
-        if config_path is None:
-            self.config_path = p.abspath('./imgtag.cfg')
-        else:
-            self.config_path = p.abspath(str(config_path))
+        self.config_path = p.abspath(str(config_path))
         if config is None:
-            self.config = {}
-            self._dbg("loading configuration from %s", config_path)
-            exec(compile(open(self.config_path).read(), self.config_path, 'exec'), self.config)
+            self.config = self.default_config.copy()
+            if p.isfile(self.config_path):
+                self._dbg("loading configuration from %s", config_path)
+                with open(self.config_path, 'rU') as config_fp:
+                    try:
+                        config_code = compile(config_fp.read(), self.config_path, 'exec')
+                        exec(config_code, self.config)
+                    except Exception as ex:
+                        self._warn("error in config file, raising")
+                        raise
+                self._dbg("images under %s", self.top_path)
+                self._dbg("tags under %s", self.tags_path)
+            else:
+                self._dbg("config not found at %s, using default config", self.config_path)
         else:
             self.config = config
 
+        if not p.isdir(self.tags_path):
+            self._dbg("making new tags dir at %s", self.tags_path)
+            os.mkdir(self.tags_path)
+
+        self._hash_cache = _io.FileHashCache(self._hash_cache_path)
         self._scanning = False
         self._scanning_changed = threading.Condition()
         self._cancel_scan = False
@@ -270,30 +294,21 @@ class TagDB(_logging.InstanceLoggingMixin,
 
         self.scanning = False
         return True
-    
-    def _make_dupe_checker(self, path):
-        self._dbg("reading %s to check for duplicates", path)
-        with open(path, 'rb') as fp:
-            data = fp.read()
-        def _do_check(dupe):
-            self._dbg("comparing %s to %s", path, dupe)
-            with open(dupe, 'rb') as fp:
-                dupe_data = fp.read()
-            return data == dupe_data
-        return _do_check
 
-    def print_dupes(self, delete=False):
+    def find_dupes(self):
+        by_hash = collections.defaultdict(dict)
+        cnt = 0
         for image in self.images.values():
-            check = self._make_dupe_checker(image.path)
+            cnt += 1
+            if cnt % 1000 == 0:
+                self._hash_cache.save()
             for path in image.paths:
-                if path == image.path:
-                    continue
-                if check:
-                    print("%s: duplicate at %s" % (image, path))
-                    if delete:
-                        os.unlink(path)
-                else:
-                    print("%s: name conflict %s" % (image, path))
+                path_hash = self._hash_cache.find_hash(path)
+                by_hash[path_hash][path] = image
+
+        for entry in by_hash.values():
+            if len(entry) > 1:
+                yield entry
 
     def find_by_tags(self, tag_expression, **bindings):
         tag_expression = compile(tag_expression, '<tagexpr>', 'eval')
@@ -322,6 +337,7 @@ class TagDB(_logging.InstanceLoggingMixin,
         return [image.path for image in images]
 
     def save_dirty(self):
+        self._hash_cache.save()
         for tag in self.tags.values():
             try:
                 tag.save()

@@ -1,11 +1,12 @@
-
-
+import collections
 try:
     from fcntl import fcntl, F_SETFL, F_GETFL
 except:
     fcntl = None
+import hashlib
 import io
 import os
+import os.path
 import select
 
 from . import _logging
@@ -98,3 +99,71 @@ def make_nonblocking(fd):
     else:
         raise ValueError("unsupported without fcntl and os.O_NONBLOCK")
 
+class FileHashCache(object):
+    READ_BATCH_SIZE = 1024*1024
+    # note: unix filenames are bytes, so we try to avoid translating paths
+    #       provided as bytes to str and back.
+
+    Entry = collections.namedtuple('Entry', 'hashval size mtime')
+    def __init__(self, cache_path):
+        self.cache = {}
+        self.cache_path = cache_path
+        if os.path.isfile(cache_path):
+            self.load()
+        else:
+            _dbg("hash cache at %s not present, starting from scratch", cache_path)
+
+    def load(self):
+        _dbg("reading hash cache at %s", self.cache_path)
+        with open(self.cache_path, 'rb') as cache_fp:
+            for cache_entry in cache_fp:
+                if cache_entry.strip() == b'':
+                    continue
+                try:
+                    hashval, size, mtime, path = cache_entry.strip().split(b' ', 3)
+                    self.cache[path] = self.Entry(str(hashval, 'utf-8'), int(size), float(mtime))
+                except ValueError:
+                    _warn("ignoring invalid cache entry %a", cache_entry.strip())
+        _dbg("read cache with %s entries from %s", len(self.cache), self.cache_path)
+
+    @classmethod
+    def calculate_hash(cls, path):
+        #_dbg("calculating hash for %s", path)
+        buf = bytearray(cls.READ_BATCH_SIZE)
+        with open(path, 'rb', buffering=0) as fp:
+            bytes_read = fp.readinto(buf)
+            hasher = hashlib.sha1(buf[:bytes_read])
+            while bytes_read > 0:
+                bytes_read = fp.readinto(buf)
+                hasher.update(buf[:bytes_read])
+        #_dbg("hash for %s is %s", path, hasher.hexdigest())
+        return hasher.hexdigest()
+
+    def find_hash(self, path):
+        # should we abspath here?
+        if isinstance(path, bytes):
+            key = path
+        else:
+            key = str(path).encode('utf-8')
+        if not os.path.isfile(path):
+            self.cache.pop(key, None)
+            return ''
+
+        st = os.stat(path)
+        if key in self.cache:
+            entry = self.cache[key]
+            if entry.size == st.st_size and entry.mtime == st.st_mtime:
+                return entry.hashval
+            # else fall through and re-calculate
+
+        hashval = self.calculate_hash(path)
+        self.cache[key] = self.Entry(hashval, st.st_size, float(st.st_mtime))
+        return hashval
+
+    def save(self):
+        _dbg("saving hash cache to %s with %s entries", self.cache_path, len(self.cache))
+        with open(self.cache_path, 'wb') as cache_fp:
+            for path, entry in self.cache.items():
+                cache_fp.write('{} {} {} '.format(entry.hashval, entry.size, entry.mtime).encode('utf-8'))
+                cache_fp.write(path)
+                cache_fp.write(b'\n')
