@@ -1,7 +1,7 @@
 from PySide import QtCore, QtDeclarative, QtGui
 
 from ._collection import WatchableList
-from . import _logging
+from . import _logging, weakmethod
 _logger, _dbg, _info, _warn = _logging.get_logging_shortcuts(__name__)
 
 class Shortcut(object):
@@ -126,10 +126,10 @@ class ListModel(WatchableList, HasProperties, qt.core.AbstractListModel):
     def __init__(self, parent=None, *args, **kw):
         qt.core.AbstractListModel.__init__(self, parent, *args, **kw)
         WatchableList.__init__(self)
-        self.setRoleNames({0: 'value'})
-        self.add_listener_gen('update', self.update_gen)
-        self.add_listener_gen('insert', self.insert_gen)
-        self.add_listener_gen('del', self.delete_gen)
+        self.setRoleNames({32: 'value'})
+        self.add_listener_gen('update', weakmethod(self.update_gen))
+        self.add_listener_gen('insert', weakmethod(self.insert_gen))
+        self.add_listener_gen('del', weakmethod(self.delete_gen))
 
     def update_gen(self, _also_self, _eventname, idx, new_value):
         if isinstance(idx, slice):
@@ -151,8 +151,7 @@ class ListModel(WatchableList, HasProperties, qt.core.AbstractListModel):
         result_kw = yield
         self.endInsertRows()
         if 'exc_info' in result_kw:
-            self.beginResetModel()
-            self.endResetModel()
+            self.reset()
         self.lengthChanged.emit()
 
     def delete_gen(self, _also_self, _eventname, idx):
@@ -171,21 +170,34 @@ class ListModel(WatchableList, HasProperties, qt.core.AbstractListModel):
             self.reset()
         self.lengthChanged.emit()
 
-    @qt.core.Slot(result=int)
+    @qt.core.Slot()
+    def clear(self):
+        del self[:]
+
     def rowCount(self, parent=qt.core.ModelIndex()):
         return len(self)
 
-    length, lengthChanged = Property(int, rowCount)
+    length, lengthChanged = Property(int, lambda self: self.rowCount())
 
     def _prep(self, val):
         return val
 
+    def _display(self, val):
+        return str(self._prep(val))
+
+    def headerData(self, section, orientation, role=0):
+        return ""
+
     def data(self, index, role=0):
-        if role != 0 or index.column() != 0 or index.parent().isValid():
+        if role not in (0, 32) or index.column() != 0 or index.parent().isValid():
+            _warn("Invalid access on wmpy.pyside.ListModel %s[%s]", self, index)
             return None
         index = index.row()
         try:
-            return self._prep(self[index])
+            if role == 0:
+                return self._display(self[index])
+            else:
+                return self._prep(self[index])
         except Exception:
             _warn("Exception in %s.data()", self, exc_info=True)
             return None
@@ -198,7 +210,7 @@ class ListModel(WatchableList, HasProperties, qt.core.AbstractListModel):
     @qt.core.Slot(int, result="QVariant")
     def get(self, row):
         try:
-            return self.data(self.index(row))
+            return self.data(self.index(row), 32)
         except Exception:
             _warn("Exception in %s.get()", self, exc_info=True)
             return None

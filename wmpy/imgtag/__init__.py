@@ -9,6 +9,7 @@ import sys
 import threading
 import weakref
 
+from .. import nat_sort_key
 from .. import _collection
 from .. import _io
 from .. import _logging
@@ -327,7 +328,11 @@ class TagDB(_logging.InstanceLoggingMixin,
             indices = {}
             for i, image in enumerate(self.tags[sort_tag].image_list):
                 indices[id(image)] = i
+            print("sorting image list by tag " + sort_tag)
             images.sort(key=lambda image: indices[id(image)])
+        else:
+            print("sorting image list by name")
+            images.sort(key=lambda image: nat_sort_key(image.name))
         return images
 
     @staticmethod

@@ -5,7 +5,7 @@ Loader { id: imagewrapper
     property variant size: Qt.size(1, 1)
     property int fillMode: Image.PreserveAspectFit
     property variant sourceSize: null
-    property bool loaded: Boolean(image && image.size && image.size.width)
+    property bool loaded: Boolean(image && image.size && image.size.width && image.path)
     onImageChanged: { if (image) size = image.size; }
     sourceComponent: image && image.size ? filled : empty
     Component { id: empty; Text {

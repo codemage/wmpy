@@ -25,8 +25,11 @@ def nat_sort_key(val):
         cases.
     """
     split_val = _grouped_digits_re.split(str(val))
-    for i in range(1, len(split_val), 2):
-        split_val[i] = int(split_val[i])
+    for i, x in enumerate(split_val):
+        try:
+            split_val[i] = (int(x), x)
+        except ValueError:
+            split_val[i] = (0, x)
     start = 1 if split_val[0] == '' else 0
     end = -1 if split_val[-1] == '' else None
     split_val = split_val[start:end]
@@ -58,12 +61,16 @@ class ValueObjectMixin(object):
 
 class weakmethod(object):
     """ Converts a bound method to one with a weakly-referenced 'self'. """
-    def __init__(self, method, weakref_cb):
+    def __init__(self, method, weakref_cb=None):
         self.obj = weakref.ref(method.__self__, weakref_cb)
         self.method = method.__func__
 
     def __call__(self, *args, **kw):
-        self.method(self.obj(), *args, **kw)
+        instance = self.obj()
+        if instance is not None:
+            return self.method(instance, *args, **kw)
+        else:
+            raise ValueError('weakmethod called on dead value')
 
 from ._collection import *
 from ._io import *

@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # PySide QT4-based image viewer prototype
+import collections
 import logging
 import os, os.path
 import sys
+import time
 import threading
 import traceback
 import weakref
@@ -35,23 +37,6 @@ class TagContents(wmpyside.ListBase):
     def _prep(self, value):
         return self._db.getImage(value)
 
-class TagList(wmpyside.ListBase):
-    def __init__(self, db, image, parent=None, *args, **kw):
-        self._db = weakref.proxy(db)
-        self._image = weakref.proxy(image)
-        wmpyside.ListBase.__init__(self, parent, *args, **kw)
-        self._image.tags.add_weak_listener(self.changed)
-
-    def _reset(self):
-        self._items = sorted(self._image.tags)
-        if len(self._items) == 0:
-            self._items = [{'name': '(none)', 'rowCount': 0}]
-
-    def _prep(self, val):
-        if isinstance(val, dict):
-            return val
-        return self._db.getTag(val)
-
 class QTag(wmpyside.HasProperties, qt.core.Object):
     name, nameChanged = wmpyside.Property(str, lambda self: self.tag.name)
     listPath, listPathChanged = \
@@ -71,41 +56,41 @@ class QTaggedImage(wmpyside.HasProperties, qt.core.Object):
     # we cheat here: changed signals are not actually fired when the underlying
     #                image is modified which could cause problems if we ever
     #                change an image's tags from Python without using toggleTag
-    name, nameChanged = wmpyside.Property(str, lambda self: self._name)
-    path, pathChanged = wmpyside.Property(str, lambda self: self._path)
-    tags, tagsChanged = wmpyside.Property('QVariant', lambda self: self._tags)
+    name, nameChanged = wmpyside.SimpleProperty(str, '_name')
+    path, pathChanged = wmpyside.SimpleProperty(str, '_path')
+    tags, tagsChanged = wmpyside.SimpleProperty('QVariant', '_tags')
     size, sizeChanged = wmpyside.SimpleProperty(qt.core.Size, "_size")
-    url, urlChanged = wmpyside.Property(qt.core.Url, lambda self:
-        qt.core.Url.fromLocalFile(self._path))
+    url, urlChanged = wmpyside.Property('QVariant', lambda self:
+        qt.core.Url.fromLocalFile(self._path) if self._path else "")
 
     def __init__(self, db, taggedImage):
         qt.core.Object.__init__(self)
         self._image = weakref.proxy(taggedImage, self.clear)
         self._name = self._image.name
         self._path = self._image.path
-        self._db = weakref.proxy(db)
-        self._tags = TagList(db, taggedImage)
+        self._tags = list(taggedImage.tags)
         self._size = qt.core.Size(0, 0)
         
     def clear(self, _ref=None):
-        self._name = ''
-        self.nameChanged.emit()
-        self._path = 'nothing_loaded.png'
-        self.pathChanged.emit()
+        del self._image
+        self.name = ''
+        self.path = ''
         self.urlChanged.emit()
-        self._tags = None
-        self.tagsChanged.emit()
+        self.tags = []
         self.size = qt.core.Size(0,0)
 
     @qt.core.Slot(str)
     def toggleTag(self, name):
+        if not hasattr(self, '_image'):
+            _dbg('bad call to cleared image toggleTag')
+            return
         if name in self._image.tags:
             print("removing tag %s from %s" % (name, self.name))
             self._image.tags.remove(name)
         else:
             print("adding tag %s to %s" % (name, self.name))
             self._image.tags.append(name)
-        self.tagsChanged.emit()
+        self.tags = list(self._image.tags)
 
 class QTagDB(wmpy.InstanceLoggingMixin,
              wmpyside.HasProperties,
@@ -120,6 +105,7 @@ class QTagDB(wmpy.InstanceLoggingMixin,
         qt.core.Object.__init__(self, *args, **kw)
         self.startingTagExpr = startingTagExpr
         self._db = None
+        self._qimages = {}
         self.close()
 
     def save(self):
@@ -168,9 +154,8 @@ class QTagDB(wmpy.InstanceLoggingMixin,
         self.failed = ''
         self.tags = {}
         self.tagNames = []
-        if hasattr(self, '_qimages'):
-            for image in self._qimages.values():
-                image.clear()
+        for image in self._qimages.values():
+            image.clear()
         self._qimages = {}
 
     scan = qt.core.Slot()(imgtag.TagDB.scan)
@@ -205,20 +190,16 @@ class QTagDB(wmpy.InstanceLoggingMixin,
 
     @qt.core.Slot(str, result="QVariant")
     def getImageList(self, tagexpr):
-        print("getImageList", repr(tagexpr))
+        _dbg("getImageList %s", repr(tagexpr))
         imagelist = wmpyside.ListModel()
         if not self.loaded:
             return imagelist
-        if tagexpr in self._db.tags:
-            imagenames = self.getTag(tagexpr).images[:]
-            imagelist[:] = (self.getImage(name) for name in imagenames)
-        else:
-            try:
-                images = self._db.find_by_tags(tagexpr)
-                imagelist[:] = (self.getImage(i.name) for i in images)
-            except Exception:
-                _warn("error in tagexpr", exc_info=True)
-                traceback.print_exc()
+        try:
+            images = self._db.find_by_tags(tagexpr)
+            imagelist[:] = (self.getImage(i.name) for i in images)
+        except Exception:
+            _warn("error in tagexpr", exc_info=True)
+            traceback.print_exc()
         return imagelist
 
 class ViewProxy(qt.core.Object):
@@ -230,64 +211,90 @@ class ViewProxy(qt.core.Object):
     def getView(self):
         return self._view()
 
-class ImgView(qt.quick.View):
+class Context(object):
+    def __init__(self, view):
+        self._wrapped = view.rootContext()
+    def __getattr__(self, name):
+        return self._wrapped.contextProperty(name)
+    def __setattr__(self, name, value):
+        if name != '_wrapped':
+            self._wrapped.setContextProperty(name, value)
+        super.__setattr__(self, name, value)
+
+class ImgViewWidget(qt.quick.View):
+    @property
+    def root(self):
+        return self.rootObject()
+
+    @property
+    def ctx(self):
+        return Context(self)
+
+    def hideEvent(self, event):
+        if self.isVisible():
+            return qt.quick.View.hideEvent(self, event)
+        _dbg("hide event recieved, closing")
+        # getattr(self.root.property('images'), 'clear', lambda:None)()
+        
+        self.ctx.tagdb.save()
+        self.ctx.tagdb.close()
+        return qt.quick.View.hideEvent(self, event)
+
+class ImgView(object):
     qml_path = os.path.join(os.path.dirname(__file__), '..', 'qml')
 
     def __init__(self, tags_dir, starting_tagexpr, *args, **kw):
-        qt.quick.View.__init__(self, *args, **kw)
-        self.config_path = config_path=os.path.join(tags_dir, 'imgtag.cfg')
-        self.db = QTagDB(starting_tagexpr)
-        self.rootContext().setContextProperty('tagdb', self.db)
-        self.rootContext().setContextProperty('viewProxy', ViewProxy(self))
-        self._closed = False
-
         self.initialized = False
-        self.statusChanged.connect(self.statusCheck)
-        self.setSource(qt.core.Url.fromLocalFile(
+        self.view = ImgViewWidget(*args, **kw)
+        self.config_path = config_path=os.path.join(tags_dir, 'imgtag.cfg')
+        self.view.ctx.tagdb = QTagDB(starting_tagexpr)
+        self.view.ctx.viewProxy = ViewProxy(self.view)
+
+        self.view.statusChanged.connect(self.statusCheck)
+        self.view.setSource(qt.core.Url.fromLocalFile(
             os.path.join(self.qml_path, 'imgview.qml')))
 
+    def _abort(self):
+        if self.view.isVisible():
+            self.view.close()
+        else:
+            _dbg("error, aborting")
+            self.view.destroy()
+            qt.gui.Application.exit(1)
+            sys.exit(1)
+
     def statusCheck(self):
-        if self.status() == qt.quick.View.Error:
+        if self.view.status() == qt.quick.View.Error:
             # TODO: consider popping up an error message, use self.errors
             # may need to listen to self.engine.warnings and self.engine.setOutputWarningsToStandardError(False)
-            sys.stderr.write("Failed to load QML\n")
-            self.close()
-            qt.core.CoreApplication.exit(1)
-            sys.exit(1)
-        elif self.initialized or self.status() == qt.quick.View.Loading:
+            errors = '\n'.join(str(err) for err in self.view.errors())
+            qt.gui.MessageBox.critical(None, 'Error Loading ImgView', 'Failed to load QML:\n' + errors)
+            _logger.critical("Failed to load QML")
+            return self._abort()
+        elif self.initialized or self.view.status() == qt.quick.View.Loading:
             return
 
         try:
-            assert self.status() == qt.quick.View.Ready
+            assert self.view.status() == qt.quick.View.Ready
 
-            self.setWindowTitle("ImgView")
-            self.setResizeMode(qt.quick.View.SizeRootObjectToView)
-            self.engine().quit.connect(self.close)
-
-            self.db.open(self.config_path)
+            self.view.setWindowTitle("ImgView")
+            self.view.setResizeMode(qt.quick.View.SizeRootObjectToView)
+            self.view.engine().quit.connect(self.view.close)
+            self.view.ctx.tagdb.open(self.config_path)
         except:
-            _warn("error loading", exc_info=True)
-            self.close()
-            qt.core.CoreApplication.exit(1)
-            sys.exit(1)
+            _logger.critical("error loading", exc_info=True)
+            qt.gui.MessageBox.critical(None, 'Error Loading ImgView', 'Exception while loading:\n' + traceback.format_exc())
+            return self._abort()
 
         self.initialized = True
-        self.show()
-
-    def closeEvent(self, evt):
-        self.db.save()
-        self.db.close()
-        qt.core.CoreApplication.quit()
+        self.view.show()
 
 gen_parser = wmpy.ParserGenerator()
 
 @gen_parser()
 def main(tags_dir='.', starting_tagexpr='untagged'):
-    view = ImgView(tags_dir, starting_tagexpr)
-    try:
-        return qt.core.CoreApplication.exec_()
-    finally:
-        view.destroy()
+    controller = ImgView(tags_dir, starting_tagexpr)
+    return qt.gui.Application.exec_()
 
 if __name__ == '__main__':
     app = qt.gui.Application(sys.argv)

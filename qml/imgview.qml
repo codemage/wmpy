@@ -20,7 +20,8 @@ Rectangle {
     property real zoomLevel: 1
     property variant tag: tagdb.loaded && view.tagName ? tagdb.getTag(view.tagName) : false
     property variant images: []
-    property variant image: z(list.currentItem, 'image')
+    property variant image: (tagdb.loaded && list.currentIndex >= 0) ? view.images.get(list.currentIndex) : null
+    onImageChanged: { console.log("current image: ", image ? image.name : "None"); }
 
     function reloadImages() {
         if (tagdb.hasTag(view.tagExpr)) {
@@ -77,7 +78,7 @@ Rectangle {
             contentHeight: view.z(loader, 'height')
             boundsBehavior: Flickable.StopAtBounds
             ImageLoader { id: loader
-                image: modelData
+                image: view.images.get(index) // XXX crash on exit if use value or modelData here
                 function zoom() {
                     if (!loader.loaded) return 1;
                     var s = image.size;
@@ -279,8 +280,8 @@ Rectangle {
         if (!view.image || !view.image.tags) return false;
 
         for (var i = 0; i < view.image.tags.length; i++) {
-            var tag = view.image.tags.get(i);
-            if (tag.name == tagname)
+            var tag = view.image.tags[i];
+            if (tag == tagname)
                 return true;
         }
         return false;
@@ -302,7 +303,7 @@ Rectangle {
                     text: modelData.name ? modelData.name : modelData
                 }
                 property variant editor: Component { Text {
-                    text: modelData.name ? modelData.name : modelData
+                    text: modelData
                     color: tagSelect.containsMouse ? "yellow" : "white"
                     font.bold: hasTag(modelData)
                     horizontalAlignment: Text.AlignHCenter
