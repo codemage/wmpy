@@ -105,8 +105,9 @@ class FileHashCache(object):
     #       provided as bytes to str and back.
 
     Entry = collections.namedtuple('Entry', 'hashval size mtime')
-    def __init__(self, cache_path):
+    def __init__(self, base_path, cache_path):
         self.cache = {}
+        self.by_hash = collections.defaultdict(set)
         self.cache_path = cache_path
         if os.path.isfile(cache_path):
             self.load()
@@ -120,17 +121,18 @@ class FileHashCache(object):
                 if cache_entry.strip() == b'':
                     continue
                 try:
-                    hashval, size, mtime, path = cache_entry.strip().split(b' ', 3)
-                    self.cache[path] = self.Entry(str(hashval, 'utf-8'), int(size), float(mtime))
+                    hashval, size, mtime, path_key = cache_entry.strip().split(b' ', 3)
+                    self.cache[path_key] = self.Entry(str(hashval, 'utf-8'), int(size), float(mtime))
+                    self.by_hash[hashval].add(path_key)
                 except ValueError:
                     _warn("ignoring invalid cache entry %a", cache_entry.strip())
         _dbg("read cache with %s entries from %s", len(self.cache), self.cache_path)
 
     @classmethod
-    def calculate_hash(cls, path):
+    def calculate_hash(cls, abs_path):
         #_dbg("calculating hash for %s", path)
         buf = bytearray(cls.READ_BATCH_SIZE)
-        with open(path, 'rb', buffering=0) as fp:
+        with open(abs_path, 'rb', buffering=0) as fp:
             bytes_read = fp.readinto(buf)
             hasher = hashlib.sha1(buf[:bytes_read])
             while bytes_read > 0:
@@ -139,26 +141,41 @@ class FileHashCache(object):
         #_dbg("hash for %s is %s", path, hasher.hexdigest())
         return hasher.hexdigest()
 
-    def find_hash(self, path):
-        # should we abspath here?
+    @classmethod
+    def path_to_key(cls, path):
+        """ Whether paths are bytes or str is OS-dependent; we key based on
+            bytes, UTF-8 encoding if necessary. """
         if isinstance(path, bytes):
-            key = path
+            return path
         else:
-            key = str(path).encode('utf-8')
-        if not os.path.isfile(path):
+            return str(path).encode('utf-8')
+
+    def find_hash(self, path):
+        """ Find a hash in the cache for path, which should be relative to base_path
+            as passed to the constructor. """
+        key = self.path_to_key(path)
+        abs_path = os.path.join(self.base_path, path)
+        if not os.path.isfile(abs_path):
             self.cache.pop(key, None)
             return ''
 
-        st = os.stat(path)
+        st = os.stat(abs_path)
         if key in self.cache:
             entry = self.cache[key]
             if entry.size == st.st_size and entry.mtime == st.st_mtime:
                 return entry.hashval
             # else fall through and re-calculate
 
-        hashval = self.calculate_hash(path)
+        hashval = self.calculate_hash(abs_path)
         self.cache[key] = self.Entry(hashval, st.st_size, float(st.st_mtime))
+        self.by_hash[hashval].add(key)
         return hashval
+
+    def paths_for_hash(self, hashval):
+        if hashval not in self.by_hash:
+            return set()
+        else:
+            return self.by_hash[hashval]
 
     def save(self):
         _dbg("saving hash cache to %s with %s entries", self.cache_path, len(self.cache))

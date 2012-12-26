@@ -21,21 +21,21 @@ _logger, _dbg, _info, _warn = _logging.get_logging_shortcuts(__name__)
 
 class TaggedImage(ValueObjectMixin, object):
     _cmp_key = property(lambda self: self.name)
-    def __init__(self, path, tags, base):
+    def __init__(self, abs_path, tags, base):
         ValueObjectMixin.__init__(self)
         self.base = base
-        self.name = p.basename(path)
+        self.name = p.basename(abs_path)
         self.tags = weakref.proxy(tags[self])
-        self.paths = {path}
+        self.abs_paths = {abs_path}
 
-    def add_path(self, new_path):
-        assert(p.basename(new_path) == self.name)
-        self.paths.add(new_path)
+    def add_path(self, new_abs_path):
+        assert(p.basename(new_abs_path) == self.name)
+        self.abs_paths.add(new_abs_path)
 
     @property
     def path(self):
         """ canonical path is always the shortest: """
-        return min(self.paths, key=len)
+        return min(self.abs_paths, key=len)
 
     def __str__(self):
         return p.relpath(self.path, self.base)
@@ -49,7 +49,7 @@ class TaggedImage(ValueObjectMixin, object):
 
     def move(self, target_dir):
         new_path = p.join(self.base, target_dir, self.name)
-        if new_path in self.paths:
+        if new_path in self.abs_paths:
             _warn("Not moving %s, already at %s", self, new_path)
             return
         old_path = self.path
@@ -57,8 +57,8 @@ class TaggedImage(ValueObjectMixin, object):
             old_path, new_path, self.tagstr)
         try:
             os.renames(old_path, new_path)
-            self.paths.remove(old_path)
-            self.paths.add(new_path)
+            self.abs_paths.remove(old_path)
+            self.abs_paths.add(new_path)
         except OSError:
             _warn("Failed to move %s", self, exc_info=True)
 
@@ -184,7 +184,7 @@ class TagDB(_logging.InstanceLoggingMixin,
             self._dbg("making new tags dir at %s", self.tags_path)
             os.mkdir(self.tags_path)
 
-        self._hash_cache = _io.FileHashCache(self._hash_cache_path)
+        self._hash_cache = _io.FileHashCache(self.top_path, self._hash_cache_path)
         self._scanning = False
         self._scanning_changed = threading.Condition()
         self._cancel_scan = False
@@ -211,7 +211,7 @@ class TagDB(_logging.InstanceLoggingMixin,
         abspath = p.abspath(p.join(self.top_path, path))
         filename = p.basename(abspath)
         if filename in self.images:
-            if abspath not in self.images[filename].paths:
+            if abspath not in self.images[filename].abs_paths:
                 if source is None:  # path is on the filesystem:
                     self.images[filename].add_path(abspath)
                 else:
@@ -219,7 +219,7 @@ class TagDB(_logging.InstanceLoggingMixin,
                         abspath, source, self.images[filename].path)
         else:
             self.images[filename] = TaggedImage(
-                path=abspath,
+                abs_path=abspath,
                 tags=self._mm_tags,
                 base=self.top_path)
         return self.images[filename]
@@ -296,20 +296,29 @@ class TagDB(_logging.InstanceLoggingMixin,
         self.scanning = False
         return True
 
-    def find_dupes(self):
-        by_hash = collections.defaultdict(dict)
+    def update_hashes(self):
         cnt = 0
+        total = len(self.images.values)
         for image in self.images.values():
             cnt += 1
-            if cnt % 1000 == 0:
+            if cnt % 100 == 0:
                 self._hash_cache.save()
-            for path in image.paths:
-                path_hash = self._hash_cache.find_hash(path)
-                by_hash[path_hash][path] = image
+                yield (cnt, total)
+            for abs_path in image.abs_paths:
+                rel_path = os.path.relpath(abs_path, self.top_path)
+                self._hash_cache.find_hash(rel_path)
+        yield (total, total)
 
-        for entry in by_hash.values():
+    def find_dupes(self):
+        list(self.update_hashes())
+        for hashval, entry in self._hash_cache.by_hash.items():
             if len(entry) > 1:
-                yield entry
+                yield self.find_by_hash(hashval)
+
+    def find_by_hash(self, hashval):
+        return {
+            path: self.images[os.path.join(self.top_path, path)]
+            for path in self._hash_cache.by_hash[hashval] }
 
     def find_by_tags(self, tag_expression, **bindings):
         tag_expression = compile(tag_expression, '<tagexpr>', 'eval')
