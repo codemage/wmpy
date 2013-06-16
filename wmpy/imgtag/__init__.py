@@ -9,7 +9,6 @@ import sys
 import threading
 import weakref
 
-from .. import nat_sort_key
 from .. import _collection
 from .. import _io
 from .. import _logging
@@ -320,28 +319,19 @@ class TagDB(_logging.InstanceLoggingMixin,
             path: self.images[os.path.join(self.top_path, path)]
             for path in self._hash_cache.by_hash[hashval] }
 
-    def find_by_tags(self, tag_expression, **bindings):
+    def _compile_tagexpr(self, tag_expression, bindings):
         tag_expression = compile(tag_expression, '<tagexpr>', 'eval')
+        for name, value in tagexpr.tagexpr_builtins.items():
+            bindings.setdefault(name, value)
         for tagname in self.tags:
             bindings.setdefault(tagname, tagexpr.Tag(tagname))
         bindings.setdefault('untagged', tagexpr.Untagged())
-        tag_expression = eval(tag_expression, bindings)
-        images = []
-        for image in self.images.values():
-            tags = set(image.tags)
-            if tag_expression.evaluate(image, tags):
-                images.append(image)
+        return eval(tag_expression, bindings)
 
-        sort_tag = tag_expression.sort_tag()
-        if sort_tag is not None:
-            indices = {}
-            for i, image in enumerate(self.tags[sort_tag].image_list):
-                indices[id(image)] = i
-            print("sorting image list by tag " + sort_tag)
-            images.sort(key=lambda image: indices[id(image)])
-        else:
-            print("sorting image list by name")
-            images.sort(key=lambda image: nat_sort_key(image.name))
+    def find_by_tags(self, tag_expression, **bindings):
+        tag_expression = self._compile_tagexpr(tag_expression, bindings)
+        images = list(tag_expression.filter(self.images.values()))
+        tag_expression.sort_images(self.tags, images)
         return images
 
     @staticmethod
