@@ -2,6 +2,9 @@ import math
 import random
 
 from .. import nat_sort_key
+from .. import _logging
+
+_logger, _dbg, _info, _warn = _logging.get_logging_shortcuts(__name__)
 
 class Expr(object):
     def __and__(self, other):
@@ -27,11 +30,11 @@ class Expr(object):
 
     __truediv__ = __div__
 
+    def __mul__(self, factor):
+        return RandomSubset(self, 1.0/factor)
+
     def __bool__(self):
         raise ValueError("use &, |, and ~ for logic in tag expressions")
-
-    def sort_tag(self):
-        return None
 
     def preprocess(self, all_images):
         pass
@@ -43,6 +46,7 @@ class Expr(object):
                 yield image
 
     def sort_images(self, tags, images):
+        _dbg("Sorting %d images from %s by name", len(images), self)
         images.sort(key=lambda image: nat_sort_key(image.name))
 
 class Tag(Expr):
@@ -53,14 +57,12 @@ class Tag(Expr):
         return self.name in set(image.tags)
 
     def sort_images(self, tags, images):
+        _dbg("Sorting %d images by tag %s", len(images), self.name)
         indices = {}
         all_tagged_images = tags[self.name].image_list
         for i, image in enumerate(all_tagged_images):
             indices[id(image)] = i
         images.sort(key=lambda image: indices[id(image)])
-
-    def sort_tag(self):
-        return self.name
 
     def __str__(self):
         return self.name
@@ -119,8 +121,8 @@ class RandomSubset(Expr):
         num_returned = math.ceil(len(expr_images)/self.divisor)
         sampled = random.sample(expr_images, num_returned)
         self._selected = set(id(image) for image in sampled)
-        print("Selected {}/{} images matching '{}'".format(
-            num_returned, len(expr_images), self.expr))
+        _dbg("Selected %s/%s images matching '%s'",
+            num_returned, len(expr_images), self.expr)
 
     def evaluate(self, image):
         return id(image) in self._selected
@@ -158,6 +160,7 @@ class Shuffled(UnaryExpr):
         return operand_result
 
     def sort_images(self, tags, images):
+        _dbg("Shuffling %d images from '%s'", len(images), self.operand)
         random.shuffle(images)
 
     def __str__(self):
