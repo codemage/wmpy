@@ -1,4 +1,5 @@
 import math
+import operator
 import random
 
 from .. import nat_sort_key
@@ -25,13 +26,20 @@ class Expr(object):
     def __sub__(self, other):
         return And(self, Not(other))
 
-    def __div__(self, divisor):
-        return RandomSubset(self, divisor)
-
-    __truediv__ = __div__
+    def _subset(self, op, operand):
+        try:
+            factor = op(1.0, operand)
+        except TypeError:
+            return NotImplemented
+        return RandomSubset(self, factor)
 
     def __mul__(self, factor):
-        return RandomSubset(self, 1.0/factor)
+        return self._subset(operator.mul, factor)
+
+    def __div__(self, divisor):
+        return self._subset(operator.truediv, divisor)
+
+    __truediv__ = __div__
 
     def __bool__(self):
         raise ValueError("use &, |, and ~ for logic in tag expressions")
@@ -111,27 +119,41 @@ class And(BinaryExpr):
         self.lhs.sort_images(tags, images)
 
 class RandomSubset(Expr):
-    def __init__(self, expr, divisor):
+    def __init__(self, expr, factor=1.0):
         self.expr = expr
-        self.divisor = float(divisor)
+        self.factor = float(factor)
         self._selected = None
+
+    def __mul__(self, factor):
+        try:
+            return RandomSubset(self.expr, self.factor * factor)
+        except TypeError:
+            return NotImplemented
+
+    def __div__(self, divisor):
+        try:
+            return RandomSubset(self.expr, self.factor / divisor)
+        except TypeError:
+            return NotImplemented
+
+    __truediv__ = __div__
 
     def preprocess(self, all_images):
         expr_images = list(self.expr.filter(all_images))
-        num_returned = math.ceil(len(expr_images)/self.divisor)
+        num_returned = math.ceil(len(expr_images)*min(self.factor, 1.0))
         sampled = random.sample(expr_images, num_returned)
         self._selected = set(id(image) for image in sampled)
-        _dbg("Selected %s/%s images matching '%s'",
+        _info("Selected %s/%s images matching '%s'",
             num_returned, len(expr_images), self.expr)
 
     def evaluate(self, image):
         return id(image) in self._selected
 
     def __str__(self):
-        return "(%s)/%s" % (self.expr, self.divisor)
+        return "(%s)*%s" % (self.expr, self.factor)
 
     def __repr__(self):
-        return "RandomSubset(%r, %r)" % (self.expr, self.divisor)
+        return "RandomSubset(%r, %r)" % (self.expr, self.factor)
 
 class Or(BinaryExpr):
     OP = '|'
