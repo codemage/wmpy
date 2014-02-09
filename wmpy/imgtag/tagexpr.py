@@ -168,8 +168,8 @@ class Not(UnaryExpr):
         return "~(%s)" % self.operand
 
 class Untagged(Expr):
-    def evaluate(self, image, tags):
-        return len(tags) == 0
+    def evaluate(self, image):
+        return len(image.tags) == 0
 
     def __str__(self):
         return "untagged"

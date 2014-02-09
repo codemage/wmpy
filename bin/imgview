@@ -10,6 +10,18 @@ import threading
 import traceback
 import weakref
 
+# possible future enhancements:
+# - hotkeys for toggling specific tags (inital work on tag_hotkey_work branch)
+# - smaller groupings of related images (series, or edited variants of a single image)
+# - context toggle, e.g. to see image in order by a tag or filename from shuffled
+# - grouping of related/mutually exclusive tags (e.g. ratings, trait presence/absence flags)
+# - first-start/configuration interface
+# - ability to create new tags from within the viewer
+# - mass-edit capability for tags
+# - ability to split out and separately view/tag image regions
+# - detection of images with incorrect extensions, w/possible automatic correction
+# - ability to persist rearranged tag views back to .list files
+
 if __name__ == '__main__':
     if os.environ.get('IMGVIEW_DEBUG', '') != '':
         logging.basicConfig(level=logging.DEBUG, stream=sys.stdout,

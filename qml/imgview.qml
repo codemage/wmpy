@@ -21,6 +21,7 @@ Rectangle {
     property variant tag: tagdb.loaded && view.tagName ? tagdb.getTag(view.tagName) : false
     property variant images: []
     property variant image: (tagdb.loaded && list.currentIndex >= 0) ? view.images.get(list.currentIndex) : null
+    property variant scratchLoader: null
     onImageChanged: { console.log("current image: ", image ? image.name : "None"); }
 
     function reloadImages() {
@@ -52,90 +53,66 @@ Rectangle {
         }
     function random() { show(Math.floor(Math.random()*list.count)); }
 
-    ListView { id: list
-        model: view.images
-        width: parent.width
-        height: parent.height
-        Behavior on height { SmoothedAnimation { duration: 150 } }
-        keyNavigationWraps: true
-        cacheBuffer: width*2
-        orientation: ListView.Horizontal
-        highlightMoveSpeed: width*5
-        highlightMoveDuration: 100
-        preferredHighlightBegin: list.currentItem && list.currentItem.width
-            ? (list.width - list.currentItem.width) / 2
-            : 0
-        preferredHighlightEnd: list.preferredHighlightBegin
-        highlightRangeMode: ListView.StrictlyEnforceRange
-        spacing: 10
-        clip: true
-        Behavior on opacity { NumberAnimation { duration: 200 } }
-        delegate: Flickable { id: listEntry
-            property variant image: loader ? loader.image : 0
-            anchors { top: parent.top; bottom: parent.bottom }
-            width: view.z(loader, 'width')
-            contentWidth: view.z(loader, 'width')
-            contentHeight: view.z(loader, 'height')
-            boundsBehavior: Flickable.StopAtBounds
-            ImageLoader { id: loader
-                image: view.images.get(index) // XXX crash on exit if use value or modelData here
-                function zoom() {
-                    if (!loader.loaded) return 1;
-                    var s = image.size;
-                    var aspect = s.width/s.height;
-                    var ry = list.height/s.height;
-                    var rx = list.width/s.width;
-                    if (view.zoomLevel > 1)
-                        ry = list.height/(s.height/view.zoomLevel);
-                    return Math.min(rx, ry);
-                }
-                width: loader.loaded
-                    ? Math.min(list.width, loader.size.width * zoom())
-                    : list.width*0.75
-                height: loader.loaded
-                    ? Math.max(list.height, loader.size.height * zoom())
-                    : list.height
-            }
-            onContentHeightChanged: {
-                listEntry.contentY = (listEntry.contentHeight - list.height)/2
-            }
-            MouseArea {
-                anchors.fill: parent
-                onClicked: { next(); keyboardHandler.focus = true; }
-            }
-            states: State { name: "scratch"
-                ParentChange { target: loader; parent: view }
-                PropertyChanges { target: listEntry; width: 0 }
-                PropertyChanges { target: loader;
-                    x: view.width/2-scratch.height;
-                    y: view.height * 0.7;
-                    width: scratch.height; height: scratch.height
-                }
-            }
-            transitions: Transition { from: ""; to: "scratch"
-                SequentialAnimation {
-                    PropertyAction { target: list
-                        property: "highlightRangeMode"
-                        value: ListView.NoHighlightRange; }
-                    ParallelAnimation {
-                        NumberAnimation { target: loader; duration: 200;
-                            properties: "x,y,width,height" }
-                        NumberAnimation { target: listEntry; duration: 200;
-                            properties: "width" }
-                    }
-                    ScriptAction { script: {
-                        var image = loader.image;
-                        images.remove(index);
-                        scratch.model.append({'scratchImage': image});
-                        loader.destroy();
-                    }}
-                    PropertyAction { target: list
-                        property: "highlightRangeMode"
-                        value: ListView.StrictlyEnforceRange; }
-                }
+    ImageList { id: list
+        images: view.images
+    }
+    Component { id: movedListImage; Item { id: movedImageManager
+        property Item listEntry
+        property Item loader
+        property int index: -1
+        property Item scratchItem
+        Component.onCompleted: {
+            loader = listEntry.loader;
+            if (loader.parent != view) {
+                var image = loader.image;
+                var scratchIndex = scratch.model.count;
+                scratch.model.append({'scratchImage': image});
+                scratchItem = scratch.itemAt(scratchIndex);
+                moveToScratch.start();
+            } else {
+                scratchItem = loader; // suppresses warnings when parsing animation
+                movedImageManager.destroy();
             }
         }
-    }
+
+        SequentialAnimation { id: moveToScratch
+            PropertyAction { target: list
+                property: "highlightRangeMode"
+                value: ListView.NoHighlightRange; }
+            ParentAnimation { target: loader; newParent: view; }
+            ParallelAnimation {
+                NumberAnimation { target: loader; property: "x";
+                    duration: 200;
+                    to: scratchItem.x }
+                    // to: view.width/2-scratch.height; }
+                NumberAnimation { target: loader; property: "y";
+                    duration: 200;
+                    to: view.height * 0.7; }
+                NumberAnimation { target: loader; property: "width";
+                    duration: 200;
+                    to: scratchItem.width; }
+                NumberAnimation { target: loader; property: "height";
+                    duration: 200;
+                    to: scratchItem.height; }
+                NumberAnimation { target: listEntry; property: "width";
+                    duration: 200;
+                    to: 0; }
+                // TODO: animation to make space in scratch list somehow
+            }
+            ScriptAction { script: {
+                images.remove(index);
+                // TODO: wait to destroy loader until scratch version is loaded
+                scratchItem.opacity = 1;
+                loader.destroy();
+                loader = null;
+            }}
+            PropertyAction { target: list
+                property: "highlightRangeMode"
+                value: ListView.StrictlyEnforceRange; }
+            onRunningChanged: { if (!running) movedImageManager.destroy(); }
+        }
+    }}
+        
     Flickable { id: zoomed
         visible: false
         interactive: false
@@ -342,6 +319,7 @@ Rectangle {
             width: Math.min(scratch.height, scratch.width/scratch.count)
             x: (scratch.width - width*scratch.count)/2 + width*index
             image: scratchImage
+            opacity: 0 // set to 1 by moveToScratch animation
         }
     }
     states: [
@@ -394,7 +372,10 @@ Rectangle {
             if (view.state == "zoomed" || event.modifiers & Qt.ShiftModifier) {
                 zoomLevel -= 0.25;
             } else if (list.count > 0) {
-                list.currentItem.state = "scratch";
+                movedListImage.createObject(view, {
+                    listEntry: list.currentItem,
+                    index: list.currentIndex,
+                    })
             }
         } else {
             // console.log(event.key);

@@ -1,4 +1,5 @@
 import collections
+import copy
 import functools
 import itertools
 import os
@@ -179,6 +180,11 @@ class TagDB(_logging.InstanceLoggingMixin,
         else:
             self.config = config
 
+        for name in list(self.config):
+            if name.startswith('__') and name.endswith('__'):
+                del self.config[name]
+        self.orig_config = copy.deepcopy(self.config)
+
         if not p.isdir(self.tags_path):
             self._dbg("making new tags dir at %s", self.tags_path)
             os.mkdir(self.tags_path)
@@ -343,15 +349,10 @@ class TagDB(_logging.InstanceLoggingMixin,
     def save_dirty(self):
         self._hash_cache.save()
         for tag in self.tags.values():
-            try:
-                tag.save()
-            except Exception:  # pylint: disable=W0703
-                _info("Error saving %s to %s", tag, tag.list_path,
-                    exc_info=True)
-        if any(tag.dirty for tag in self.tags.values()):
-            ns = globals().copy()
-            ns.update(locals())
-            import code
-            code.interact(local=ns,
-                banner="error saving tags, dropping into interpreter\n")
+            tag.save()
+        if self.config != self.orig_config:
+            self._info("saving modified config to %s", self.config_path)
+            with open(self.config_path, 'wt') as fp:
+                for name in self.config:
+                    fp.write('%s = %r\n' % (name, self.config[name]))
 

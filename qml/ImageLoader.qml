@@ -5,7 +5,13 @@ Loader { id: imagewrapper
     property variant size: Qt.size(1, 1)
     property int fillMode: Image.PreserveAspectFit
     property variant sourceSize: null
-    property bool loaded: Boolean(image && image.size && image.size.width && image.path)
+    property bool imageLoaded: Boolean(image && image.size && image.size.width && image.path)
+    property bool loaded: Boolean(imageLoaded && status == Loader.Ready && item.status == Image.Ready)
+    // the property here just ensures that onComplete only fires once:
+    property bool isComplete: false  // whether the initial load is finished
+    signal complete // fires when initial load is completed (successful or not)
+    onIsCompleteChanged: { if (isComplete) imagewrapper.complete(); }
+    onStatusChanged: { if (status == Loader.Error) isComplete = true; }
     onImageChanged: { if (image) size = image.size; }
     sourceComponent: image && image.size ? filled : empty
     Component { id: empty; Text {
@@ -26,6 +32,9 @@ Loader { id: imagewrapper
                     image.size = imageview.sourceSize;
                     imagewrapper.size = image.size;
                 }
+            }
+            if (imageview.status == Image.Ready || imageview.status == Image.Error) {
+                imagewrapper.isComplete = true
             }
         }
         states: State { name: "shrunk"
