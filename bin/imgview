@@ -202,16 +202,20 @@ class QTagDB(wmpy.InstanceLoggingMixin,
 
     @qt.core.Slot(str, result="QVariant")
     def getImageList(self, tagexpr):
-        _dbg("getImageList %s", repr(tagexpr))
         imagelist = wmpyside.ListModel()
+        _dbg("getImageList %s => %s", repr(tagexpr), imagelist)
         if not self.loaded:
             return imagelist
-        try:
-            images = self._db.find_by_tags(tagexpr)
-            imagelist[:] = (self.getImage(i.name) for i in images)
-        except Exception:
-            _warn("error in tagexpr", exc_info=True)
-            traceback.print_exc()
+        if tagexpr == "":
+            images = sorted(self._db.images.values(),
+                            key=lambda i: wmpy.nat_sort_key(i.name))
+        else:
+            try:
+                images = self._db.find_by_tags(tagexpr)
+            except Exception:
+                _warn("error in tagexpr", exc_info=True)
+                traceback.print_exc()
+        imagelist[:] = (self.getImage(i.name) for i in images)
         return imagelist
 
 class ViewProxy(qt.core.Object):

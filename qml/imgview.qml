@@ -19,12 +19,15 @@ Rectangle {
     property string tagExpr: tagdb.startingTagExpr
     property real zoomLevel: 1
     property variant tag: tagdb.loaded && view.tagName ? tagdb.getTag(view.tagName) : false
-    property variant images: []
-    property variant image: (tagdb.loaded && list.currentIndex >= 0) ? view.images.get(list.currentIndex) : null
+    property variant curImages: []
+    property variant allImages: null
+    property variant images: view.curImages
+    property variant image: (tagdb.loaded && list.currentIndex >= 0 && list.currentIndex < view.images.length) ? view.images.get(list.currentIndex) : null
     property variant scratchLoader: null
     onImageChanged: { console.log("current image: ", image ? image.name : "None"); }
 
     function reloadImages() {
+        //list.state = "";
         if (tagdb.hasTag(view.tagExpr)) {
             view.tagName = view.tagExpr;
             tagExprEdit.text = "<custom tag expression>";
@@ -32,7 +35,10 @@ Rectangle {
             view.tagName = "";
             tagExprEdit.text = view.tagExpr;
         }
-        view.images = tagdb.getImageList(view.tagExpr);
+        if (!view.allImages) {
+            view.allImages = tagdb.getImageList("");
+        }
+        view.curImages = tagdb.getImageList(view.tagExpr);
     }
     onTagExprChanged: {
         if (tagdb.loaded) {
@@ -41,6 +47,7 @@ Rectangle {
     }
     Connections { target: tagdb;
         onLoadedChanged: {
+            view.allImages = null;
             reloadImages();
         }
     }
@@ -54,7 +61,24 @@ Rectangle {
     function random() { show(Math.floor(Math.random()*list.count)); }
 
     ImageList { id: list
+        property int lastIndex
         images: view.images
+        keyboardHandler: keyboardHandler
+        states: [
+        State { name: "VIEW_ALL"
+            PropertyChanges { target: view; images: allImages; }
+            StateChangeScript { script: { 
+                list.lastIndex = list.currentIndex;
+                if (list.lastIndex >= 0) {
+                    show(allImages.find(curImages.get(list.lastIndex)));
+                }
+            }}
+        },
+        State { name: ""
+            PropertyChanges { target: view; images: curImages; }
+            StateChangeScript { script: { show(list.lastIndex); }}
+        }
+        ]
     }
     Component { id: movedListImage; Item { id: movedImageManager
         property Item listEntry
@@ -333,6 +357,12 @@ Rectangle {
         var qtView = viewProxy.getView();
         if (event.key == Qt.Key_Return) {
             qtView.fullScreen ? qtView.showNormal() : qtView.showFullScreen();
+        } else if (event.key == Qt.Key_A && event.modifiers & Qt.ShiftModifier) {
+            if (list.state == "") {
+                list.state = "VIEW_ALL";
+            } else {
+                list.state = "";
+            }
         } else if (event.key == Qt.Key_Escape || event.key == Qt.Key_Q) {
             if (view.state == "") {
                 Qt.quit();

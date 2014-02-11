@@ -226,6 +226,12 @@ class ListModel(WatchableList, HasProperties, qt.core.AbstractListModel):
     def append(self, item):
         super(ListModel, self).append(item)
 
+    @qt.core.Slot("QVariant", result=int)
+    def find(self, item):
+        for i, value in enumerate(self):
+            if item == value:
+                return i
+
     @qt.core.Slot(int)
     def remove(self, row):
         del self[row]
