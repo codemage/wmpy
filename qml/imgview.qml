@@ -94,6 +94,7 @@ Rectangle {
                 scratchItem = scratch.itemAt(scratchIndex);
                 moveToScratch.start();
             } else {
+                // move already in progress
                 scratchItem = loader; // suppresses warnings when parsing animation
                 movedImageManager.destroy();
             }

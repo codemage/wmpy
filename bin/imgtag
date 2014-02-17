@@ -15,6 +15,7 @@ This is software built for personal use; if anyone besides me can figure out how
 to make it work, great, but for now I am not going to bother documenting it properly.
 """
 
+import codecs
 import errno
 import itertools
 import logging
@@ -25,6 +26,7 @@ import shlex
 import sys
 
 if __name__ == '__main__':
+    sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
     if os.environ.get('IMGTAG_DEBUG', '') != '':
         logging.basicConfig(level=logging.DEBUG, stream=sys.stdout,
             format="%(levelname)s %(message)s")
@@ -194,14 +196,14 @@ def do_ls(db, tagexpr='True', dupes=False, long=False, *bindings):
     bindings = parse_bindings(db, bindings)
     try:
         for image in sorted(db.find_by_tags(tagexpr, **bindings)):
-            if dupes and len(image.paths) == 1:
+            if dupes and len(image.abs_paths) == 1:
                 continue
-            if int:
-                duplicates = [' + %s' % d for d in image.paths if d != image.path]
+            if long:
+                duplicates = [' + %s' % d for d in image.abs_paths if d != image.path]
                 dupe_str = ''.join(duplicates)
                 print("%s\t|%s|\t%s%s" % (image.name, image.tagstr, image.path, dupe_str))
             else:
-                print(os.path.relpath(image.path))
+                print(image.path)
     except IOError as ioerr:
         if ioerr.errno != errno.EPIPE: # if EPIPE, don't care
             raise
