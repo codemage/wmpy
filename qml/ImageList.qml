@@ -1,4 +1,4 @@
-import QtQuick 1.1
+import QtQuick 2.0
 
 ListView { id: list
     property variant images: null
@@ -11,12 +11,14 @@ ListView { id: list
     keyNavigationWraps: true
     cacheBuffer: width*2
     orientation: ListView.Horizontal
-    highlightMoveSpeed: width*5
+    highlightMoveVelocity: -1
     highlightMoveDuration: 100
+    highlightResizeVelocity: -1
+    highlightResizeDuration: 100
     preferredHighlightBegin: list.currentItem && list.currentItem.width
         ? (list.width - list.currentItem.width) / 2
         : 0
-    preferredHighlightEnd: list.preferredHighlightBegin
+    preferredHighlightEnd: list.width  // XXX
     highlightRangeMode: ListView.StrictlyEnforceRange
     spacing: 10
     clip: true
@@ -30,7 +32,7 @@ ListView { id: list
         contentHeight: view.z(loader, 'height')
         boundsBehavior: Flickable.StopAtBounds
         ImageLoader { id: loader
-            image: index >= 0 ? list.images.get(index) : null // XXX crash on exit if use value or modelData here
+            image: index >= 0 ? list.images.get(index) : null // XXX crash on exit if use value or modelData here -- still applicable on PyQt5?
             onComplete: {
                 if (status == Loader.Error || item.status == Image.Error) {
                     if (image) { console.log("unable to load ", image.path); }

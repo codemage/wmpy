@@ -1,4 +1,4 @@
-from PySide import QtCore, QtDeclarative, QtGui
+from PyQt5 import QtCore, QtQml, QtGui, QtQuick, QtWidgets
 
 from ._collection import WatchableList
 from . import _logging, weakmethod
@@ -17,8 +17,15 @@ class Shortcut(object):
 
 class Shortcuts(object):
     core = Shortcut(QtCore, 'Q')
-    quick = Shortcut(QtDeclarative, 'QDeclarative')
+    core.Property = core.pyqtProperty
+    core.Signal = core.pyqtSignal
+    core.Slot = core.pyqtSlot
     gui = Shortcut(QtGui, 'Q')
+    qml = Shortcut(QtQml, 'QQml')
+    qml.RegisterType = qml.qmlRegisterType
+    qml.RegisterUncreatableType = qml.qmlRegisterUncreatableType
+    quick = Shortcut(QtQuick, 'QQuick')
+    widgets = Shortcut(QtWidgets, 'Q')
         
 qt = Shortcuts()
 
@@ -47,9 +54,9 @@ class Property(object):
             if val is self:
                 self.name = key
             elif val is self._signal:
-                self.signal = key
+                self.signal_name = key
 
-        if self.name is None or self.signal is None:
+        if self.name is None or self.signal_name is None:
             raise TypeError('must use x, x_changed = Property(...) idiom')
 
         _dbg("fixing up %s.%s", typename, self.name)
@@ -61,8 +68,8 @@ class Property(object):
 
     def __init__(self, type_, getter, setter=None):
         self.name = None
-        self.signal = None
-        self._signal = qt.core.Signal(lambda self: None)
+        self.signal_name = None
+        self._signal = qt.core.Signal()
         def wrap_getter(instance):
             try:
                 return getter(instance)
@@ -71,21 +78,26 @@ class Property(object):
                 return type_()
         if setter is None:
             self.qtproperty = qt.core.Property(type_,
-                getter,
+                wrap_getter,
                 notify=self._signal)
         else:
             def wrap_setter(instance, val):
-                setter(instance, val)
-                getattr(instance, self.signal).emit()
+                try:
+                    setter(instance, val)
+                except Exception:
+                    _warn("failed to set %s", self.name, exc_info=True)
+                else:
+                    getattr(instance, self.signal_name).emit()
             self.qtproperty = qt.core.Property(type_,
-                getter,
+                wrap_getter,
                 wrap_setter,
                 notify=self._signal)
         self._getter = getter
         self._setter = setter
 
-class PropertyMeta(type(qt.core.QObject)):
+class PropertyMeta(type(qt.core.Object)):
     def __new__(mcls, name, bases, dct):
+        _dbg("setting up HasProperties type %s", name)
         props = {}
         qtprops = {}
         for key, val in list(dct.items()):
@@ -95,7 +107,12 @@ class PropertyMeta(type(qt.core.QObject)):
         if 'HasProperties' in globals():
             bases = tuple(
                 base for base in bases if base is not HasProperties)
-        return super(PropertyMeta, mcls).__new__(mcls, name, bases, dct)
+        if not bases:
+            bases = (qt.core.Object,)
+        if name == 'HasProperties':
+            return super(PropertyMeta, mcls).__new__(mcls, name, bases, dct)
+        else:
+            return type(qt.core.Object)(name, bases, dct)
 
 class HasProperties(qt.core.Object, metaclass=PropertyMeta):
     pass
@@ -126,10 +143,12 @@ class ListModel(WatchableList, HasProperties, qt.core.AbstractListModel):
     def __init__(self, parent=None, *args, **kw):
         qt.core.AbstractListModel.__init__(self, parent, *args, **kw)
         WatchableList.__init__(self)
-        self.setRoleNames({32: 'value'})
         self.add_listener_gen('update', weakmethod(self.update_gen))
         self.add_listener_gen('insert', weakmethod(self.insert_gen))
         self.add_listener_gen('del', weakmethod(self.delete_gen))
+
+    def roleNames(self):
+        return {32: 'value'}
 
     def update_gen(self, _also_self, _eventname, idx, new_value):
         if isinstance(idx, slice):
@@ -243,8 +262,10 @@ class ListBase(HasProperties, qt.core.AbstractListModel):
     # make this a simple mix of the MMList/MMSet and ListModel above
     def __init__(self, parent=None, *args, **kw):
         qt.core.AbstractListModel.__init__(self, parent, *args, **kw)
-        self.setRoleNames({0: 'value'})
         self._reset()
+
+    def roleNames(self):
+        return {0: 'value'}
 
     def _reset(self):
         self._items = []

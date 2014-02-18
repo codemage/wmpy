@@ -1,4 +1,4 @@
-import QtQuick 1.1
+import QtQuick 2.0
 //import QtDesktop 0.1
 
 // in context from Python:
@@ -63,6 +63,7 @@ Rectangle {
     ImageList { id: list
         property int lastIndex
         images: view.images
+        enabled: visible && opacity > 0
         keyboardHandler: keyboardHandler
         states: [
         State { name: "VIEW_ALL"
@@ -140,6 +141,7 @@ Rectangle {
         
     Flickable { id: zoomed
         visible: false
+        enabled: visible
         interactive: false
         x: list.currentItem
             ? list.currentItem.x - list.contentX
@@ -236,6 +238,7 @@ Rectangle {
     Column { id: leftColumn
         anchors { left: parent.left; bottom: parent.bottom }
         visible: tagdb.loaded
+        enabled: visible
         Text { text: "Zoom: " + view.zoomLevel; color: "white" }
         Text { text: list.count ? list.currentIndex + "/" + list.count : "0/0"
             color: "white"
@@ -333,12 +336,14 @@ Rectangle {
     }
     Repeater { id: scratch
         visible: false
+        enabled: visible
         model: ListModel {}
         anchors.bottom: parent.bottom
         height: parent.height * 0.3
         width: parent.width
 
         delegate: ImageLoader { id: scratchitem
+            enabled: visible && opacity > 0
             y: scratch.y
             height: scratch.height
             width: Math.min(scratch.height, scratch.width/scratch.count)
@@ -355,9 +360,8 @@ Rectangle {
     }
     ]
     Item { id: keyboardHandler; focus: true; Keys.onReleased: {
-        var qtView = viewProxy.getView();
         if (event.key == Qt.Key_Return) {
-            qtView.fullScreen ? qtView.showNormal() : qtView.showFullScreen();
+            viewProxy.toggleFullscreen();
         } else if (event.key == Qt.Key_A && event.modifiers & Qt.ShiftModifier) {
             if (list.state == "") {
                 list.state = "VIEW_ALL";
