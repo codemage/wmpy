@@ -24,6 +24,7 @@ Rectangle {
     property variant images: view.curImages
     property variant image: (tagdb.loaded && list.currentIndex >= 0 && list.currentIndex < view.images.length) ? view.images.get(list.currentIndex) : null
     property variant scratchLoader: null
+    // onCurImagesChanged: { console.log("current images changed, new count:", curImages ? curImages.length : "(null)"); }
     onImageChanged: { console.log("current image: ", image ? image.name : "None"); }
 
     function reloadImages() {
@@ -52,32 +53,32 @@ Rectangle {
         }
     }
 
-    function next() { list.incrementCurrentIndex(); }
-    function prev() { list.decrementCurrentIndex(); }
-    function show(target) {
-        list.positionViewAtIndex(target, ListView.Center);
-        list.currentIndex = target;
-        }
-    function random() { show(Math.floor(Math.random()*list.count)); }
-
     ImageList { id: list
-        property int lastIndex
+        property int lastIndex: -1
+        property int nextIndex: -1
         images: view.images
         enabled: visible && opacity > 0
-        keyboardHandler: keyboardHandler
+        onModelChanged: {
+            if (list.nextIndex != -1) {
+                list.positionViewAtIndex(list.nextIndex, ListView.Center);
+                list.nextIndex = -1;
+            }
+        }
         states: [
         State { name: "VIEW_ALL"
-            PropertyChanges { target: view; images: allImages; }
-            StateChangeScript { script: { 
+            StateChangeScript { script: {
                 list.lastIndex = list.currentIndex;
                 if (list.lastIndex >= 0) {
-                    show(allImages.find(curImages.get(list.lastIndex)));
+                    list.nextIndex = allImages.find(curImages.get(list.lastIndex));
                 }
             }}
+            PropertyChanges { target: view; images: allImages; }
         },
         State { name: ""
+            StateChangeScript { script: {
+                list.nextIndex = list.lastIndex;
+            }}
             PropertyChanges { target: view; images: curImages; }
-            StateChangeScript { script: { show(list.lastIndex); }}
         }
         ]
     }
@@ -249,8 +250,10 @@ Rectangle {
             color: tagExprEdit.focus ? "black" : "white"
             width: Math.max(implicitWidth, 100)
             Rectangle { anchors.fill: parent; color: "white"; visible: parent.focus; z: -1; }
-            onAccepted: {
-                keyboardHandler.focus = true;
+            Keys.onReturnPressed: {
+                // was onAccepted() but that does not consume the keypress if it moves focus?
+                event.accepted = true;
+                view.focus = true;
                 view.tagExpr = text;
             }
             onFocusChanged: {
@@ -268,7 +271,7 @@ Rectangle {
                 MouseArea {
                     height: parent.height
                     width: leftColumn.width
-                    onClicked: { view.tagExpr = modelData; keyboardHandler.focus = true; }
+                    onClicked: { view.tagExpr = modelData; }
                 }
             }
         }
@@ -321,7 +324,7 @@ Rectangle {
                             if (view.image.toggleTag) {
                                 view.image.toggleTag(modelData);
                             }
-                            keyboardHandler.focus = true;
+                            // keyboardHandler.focus = true;
                         }
                     }
                 }}
@@ -359,8 +362,14 @@ Rectangle {
         PropertyChanges { target: scratch; visible: true }
     }
     ]
-    Item { id: keyboardHandler; focus: true; Keys.onReleased: {
-        if (event.key == Qt.Key_Return) {
+    focus: true;
+    Keys.priority: Keys.BeforeItem;
+    Keys.forwardTo: [list];
+    Keys.onPressed: {
+        if (event.key === Qt.Key_G) {
+            gc();
+            tagdb.pyGarbageCollect();
+        }else if (event.key == Qt.Key_Return) {
             viewProxy.toggleFullscreen();
         } else if (event.key == Qt.Key_A && event.modifiers & Qt.ShiftModifier) {
             if (list.state == "") {
@@ -378,18 +387,10 @@ Rectangle {
             }
         } else if (event.key == Qt.Key_T) {
             currentTags.state = (currentTags.state == "edit" ? "" : "edit");
-        } else if (event.key == Qt.Key_R) {
-            random();
         } else if (event.key == Qt.Key_Z) {
             zoomed.state = (zoomed.state == "active" ? "" : "active");
         } else if (event.key == Qt.Key_X) {
             zoomLevel =  1;
-        } else if (event.key == Qt.Key_Space) {
-            next();
-        } else if (event.key == Qt.Key_Right) {
-            next();
-        } else if (event.key == Qt.Key_Left) {
-            prev();
         } else if (event.key == Qt.Key_Up) {
             if (view.state == "zoomed" || event.modifiers & Qt.ShiftModifier) {
                 zoomLevel += 0.25;
@@ -401,7 +402,7 @@ Rectangle {
                 scratch.model.clear();
                 var curIndex = list.currentIndex;
                 images.insert(curIndex, scratchImages);
-                show(curIndex);
+                list.positionViewAtIndex(curIndex);
             }
         } else if (event.key == Qt.Key_Down) {
             if (view.state == "zoomed" || event.modifiers & Qt.ShiftModifier) {
@@ -413,10 +414,11 @@ Rectangle {
                     })
             }
         } else {
-            // console.log(event.key);
+            //console.log("main view rejected key event: ", event.key);
             return;
         }
+        //console.log("main view accepted key event:", event.key)
         event.accepted = true;
-    }}
+    }
 }
 

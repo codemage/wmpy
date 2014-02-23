@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 # PyQt5 QML-based image viewer prototype
 import collections
+import gc
 import logging
 import os, os.path
 import sys
@@ -144,6 +145,16 @@ class QTagDB(wmpy.InstanceLoggingMixin,
             self._returned_image_lists = []
             self.close()
 
+    @qt.core.Slot()
+    def pyGarbageCollect(self):
+        _dbg("pyGC")
+        gc.collect(2)
+
+    @qt.core.Slot()
+    def pyNoOp(self):
+        _dbg("pyNoOp")
+        return
+
     def save(self):
         with _lock:
             if self.loaded:
@@ -159,11 +170,11 @@ class QTagDB(wmpy.InstanceLoggingMixin,
 
     @qt.core.Slot(str)
     def open(self, config_path):
+        if self._loading:
+            raise ValueError("already loading")
         with _lock:
-            if self._loading:
-                raise ValueError("already loading")
             if self._loaded:
-                self.clear()
+                self.close()
 
             self.loading = True
             self._db = imgtag.TagDB(config_path)
@@ -250,25 +261,30 @@ class QTagDB(wmpy.InstanceLoggingMixin,
                     _warn("error in tagexpr", exc_info=True)
                     traceback.print_exc()
             imagelist[:] = (self.getImage(i.name) for i in images)
-            self._returned_image_lists.append(imagelist)
-            qt.qml.Engine.setObjectOwnership(imagelist, qt.qml.Engine.CppOwnership)
+            qt.qml.Engine.setObjectOwnership(imagelist, qt.qml.Engine.JavaScriptOwnership)
+            # the closure over imagelist in the destroyed signal here actually keeps a Python ref alive!
+            # don't remove it!
+            imagelist.destroyed.connect(lambda _: _dbg("deleted image list for %s@%x", tagexpr, id(imagelist)))
+            #imagelist_id = id(imagelist)
+            #self._returned_image_lists.append(
+            #    weakref.ref(imagelist, lambda _: _dbg("cleaned up image list for %s@%x", tagexpr, imagelist_id)))
             return imagelist
 
 qt.qml.RegisterType(QTagDB, "info.codethink.wmpy", 1, 0, "TaggedImageDatabase")
 
+
 class ViewProxy(qt.core.Object):
-    def __init__(self, view):
-        super(ViewProxy, self).__init__()
+    def __init__(self, view, *args, **kwargs):
+        super(ViewProxy, self).__init__(*args, **kwargs)
         self._view = weakref.ref(view)
 
     @qt.core.Slot()
     def toggleFullscreen(self):
         view = self._view()
-        # TODO: find out how to get at QtWindowState
         view.showNormal() if view.windowState() == qt.core.Qt.WindowFullScreen else view.showFullScreen()
 
-
 qt.qml.RegisterType(ViewProxy, "info.codethink.wmpy", 1, 0, "ViewProxy")
+
 
 class Context(object):
     def __init__(self, view):
@@ -276,19 +292,22 @@ class Context(object):
         self._wrapped = view.rootContext()
     def __getattr__(self, name):
         _dbg("get QML context %s on %s@%x", name, type(self._view), id(self._view))
-        _dbg("saved value is %s", getattr(self._view, '__context_property_' + name))
+        # _dbg("saved value is %s", getattr(self._view, '__context_property_' + name))
         return self._wrapped.contextProperty(name)
     def __setattr__(self, name, value):
-        if name != '_wrapped' and name != '_view':
+        if name != '_wrapped' and name != '_view' and not name.startswith('__'):
             _dbg("set QML context %s to %s@%x on %s@%x", name, type(value).__name__, id(value),
                  type(self._view), id(self._view))
+            
             self._wrapped.setContextProperty(name, value)
-            # XXX context properties do not retain refs to their wrapped PyObjects;
-            #     without keeping a separate reference around, this causes the
-            #     interpreter to segfault.
+            # XXX trying to give the QML engine ownership of context pointers segfaults the interpreter.
+            #     qt.qml.Engine.setObjectOwnership(value, qt.qml.Engine.JavaScriptOwnership)
+            # Instead, keep ownership in Python and tell QML to leave well enough alone:
+            qt.qml.Engine.setObjectOwnership(value, qt.qml.Engine.CppOwnership)
             setattr(self._view, '__context_property_' + name, value)
         else:
             super.__setattr__(self, name, value)
+
 
 class ImgViewWidget(qt.quick.View):
     @property
@@ -319,6 +338,9 @@ class ImgViewWidget(qt.quick.View):
         qt.quick.View.closeEvent(self, event)
         _dbg("close type=%s handled=%s", event.type(), handled)
 
+    def __init__(self, *args, **kwargs):
+        super(ImgViewWidget, self).__init__(*args, **kwargs)
+
 
 class ImgView(object):
     qml_path = os.path.join(os.path.dirname(__file__), '..', 'qml')
@@ -327,9 +349,8 @@ class ImgView(object):
         self.initialized = False
         self.view = ImgViewWidget(*args, **kw)
         self.config_path = config_path=os.path.join(tags_dir, 'imgtag.cfg')
-        self.view.ctx.tagdb = QTagDB(starting_tagexpr)
+        self.view.ctx.tagdb = QTagDB(starting_tagexpr, parent=self.view)
         tagdb = self.view.ctx.tagdb
-        print(tagdb.loaded, tagdb.startingTagExpr, tagdb._startingTagExpr)
         self.view.ctx.viewProxy = ViewProxy(self.view)
 
         self.view.statusChanged.connect(self.statusCheck)
@@ -349,8 +370,7 @@ class ImgView(object):
 
     def statusCheck(self):
         if self.view.status() == qt.quick.View.Error:
-            # TODO: consider popping up an error message, use self.errors
-            # may need to listen to self.engine.warnings and self.engine.setOutputWarningsToStandardError(False)
+            # TODO: may want to listen to self.engine.warnings and self.engine.setOutputWarningsToStandardError(False)
             errors = '\n'.join(str(err) for err in self.view.errors())
             qt.widgets.MessageBox.critical(None, 'Error Loading ImgView', 'Failed to load QML:\n' + errors)
             _logger.critical("Failed to load QML")
@@ -381,10 +401,11 @@ def main(tags_dir='.', starting_tagexpr='untagged'):
     return qt.widgets.Application.exec_()
 
 if __name__ == '__main__':
-    app = qt.widgets.Application(sys.argv)
+    # XXX for some reason QAppliction() loses the last argument in the list,
+    #     so add an empty one:
+    app = qt.widgets.Application(sys.argv + [''])
     try:
         qt_argv = app.arguments()
-        _dbg('%r', qt_argv)
         if 'python' in qt_argv[0]:
             del qt_argv[0]
         del qt_argv[0]

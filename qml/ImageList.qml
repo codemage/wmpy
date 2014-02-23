@@ -2,7 +2,6 @@ import QtQuick 2.0
 
 ListView { id: list
     property variant images: null
-    property variant keyboardHandler: null
     property variant loader: list.currentItem ? list.currentItem.loader : null
     model: list.images
     width: parent.width
@@ -18,7 +17,10 @@ ListView { id: list
     preferredHighlightBegin: list.currentItem && list.currentItem.width
         ? (list.width - list.currentItem.width) / 2
         : 0
-    preferredHighlightEnd: list.width  // XXX
+    // preferredHighlightEnd: list.width  // XXX
+    preferredHighlightEnd: preferredHighlightBegin
+        ? preferredHighlightBegin + list.currentItem.width / 2
+        : list.width
     highlightRangeMode: ListView.StrictlyEnforceRange
     spacing: 10
     clip: true
@@ -32,7 +34,7 @@ ListView { id: list
         contentHeight: view.z(loader, 'height')
         boundsBehavior: Flickable.StopAtBounds
         ImageLoader { id: loader
-            image: index >= 0 ? list.images.get(index) : null // XXX crash on exit if use value or modelData here -- still applicable on PyQt5?
+            image: modelData
             onComplete: {
                 if (status == Loader.Error || item.status == Image.Error) {
                     if (image) { console.log("unable to load ", image.path); }
@@ -61,7 +63,30 @@ ListView { id: list
         }
         MouseArea {
             anchors.fill: parent
-            onClicked: { next(); list.keyboardHandler.focus = true; }
+            onClicked: { incrementCurrentIndex(); }
+        }
+    }
+    function positionViewAtRandomIndex() {
+        var randomIndex = Math.floor(Math.random()*list.count);
+        console.log("moving to random index =", randomIndex)
+        list.positionViewAtIndex(randomIndex, ListView.Center);
+    }
+    onFocusChanged: console.log("ImageView.focus =", focus)
+    focus: false
+    Keys.priority: Keys.BeforeItem
+    Keys.onPressed: {
+        if (currentIndex == -1) {
+            //console.log("list ignored key event: ", event.key);
+            return;
+        }
+        if (event.key === Qt.Key_R) {
+            event.accepted = true;
+            positionViewAtRandomIndex();
+        } else if (event.key === Qt.Key_Space) {
+            event.accepted = true;
+            incrementCurrentIndex();
+        } else {
+            //console.log("list ignored key event: ", event.key);
         }
     }
 }
