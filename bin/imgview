@@ -402,13 +402,17 @@ def main(tags_dir='.', starting_tagexpr='untagged'):
 
 if __name__ == '__main__':
     # XXX for some reason QAppliction() loses the last argument in the list,
-    #     so add an empty one:
-    app = qt.widgets.Application(sys.argv + [''])
+    #     on Windows, so add an extra one:
+    # TODO: figure out why this is.
+    app = qt.widgets.Application(sys.argv + ['__extra__'])
     try:
         qt_argv = app.arguments()
+        print(qt_argv)
         if 'python' in qt_argv[0]:
             del qt_argv[0]
         del qt_argv[0]
+        if qt_argv[-1] == '__extra__':
+            del qt_argv[-1]
         sys.exit(main.parse_and_call(qt_argv))
     finally:
         del app
