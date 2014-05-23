@@ -294,48 +294,12 @@ Rectangle {
         }
         return false;
     }
-    Rectangle { id: currentTagsBackground
-        anchors { verticalCenter: parent.verticalCenter;
+    ImageTagList {
+        id: currentTags
+        anchors { verticalCenter: parent.verticalCenter
                   right: parent.right;}
-        color: "#CC000000"
-        width: currentTags.width + 20;
-        height: currentTags.height + 20;
-        Column { id: currentTags
-            anchors.centerIn: parent;
-            spacing: 10;
-            Repeater {
-                id: currentTagsRepeater
-                model: view.image ? view.image.tags : []
-                delegate: Text {
-                    color: "white";
-                    text: modelData.name ? modelData.name : modelData
-                }
-                property variant editor: Component { Text {
-                    text: modelData
-                    color: tagSelect.containsMouse ? "yellow" : "white"
-                    font.bold: hasTag(modelData)
-                    horizontalAlignment: Text.AlignHCenter
-                    MouseArea {
-                        id: tagSelect
-                        hoverEnabled: true
-                        x: -10; width: currentTagsBackground.width
-                        y: -5; height: parent.height+10
-                        onClicked: {
-                            if (view.image.toggleTag) {
-                                view.image.toggleTag(modelData);
-                            }
-                            // keyboardHandler.focus = true;
-                        }
-                    }
-                }}
-            }
-            states: State { name: "edit";
-                PropertyChanges { target: currentTagsRepeater
-                    model: Object.keys(tagdb.tags)
-                    delegate: currentTagsRepeater.editor
-                }
-            }
-        }
+        image: view.image
+        allTags: Object.keys(tagdb.tags)
     }
     Repeater { id: scratch
         visible: false
