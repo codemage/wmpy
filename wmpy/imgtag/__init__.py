@@ -1,3 +1,16 @@
+"""imgtag -- a database for tagged images.
+
+Throughout this module's documentation, "path" is used as a type.  Such values
+are always bytes instances, with the additional guarantee that on Windows their
+values will be valid UTF-8 strings.
+
+TODO: determine how FAT represents filenames, whether Linux will write
+      long filenames that are invalid UTF-8, and if so, how Windows 
+      handles that.
+
+A "tag database" is a subdirectory tree containing images, with an "imgtag"
+directory at the root containing the metadata used by this module.
+"""
 import collections
 import copy
 import functools
@@ -22,6 +35,15 @@ _logger, _dbg, _info, _warn = _logging.get_logging_shortcuts(__name__)
 class TaggedImage(ValueObjectMixin, object):
     _cmp_key = property(lambda self: self.name)
     def __init__(self, abs_path, tags, base):
+        """Instantiate a TaggedImage.
+
+        Args:
+            abs_path: path, absolute path to the image.
+            tags: _collection.ManyToMany "set" interface, representing the
+                set of tags for this image.  Weakly-referenced.
+            base: path, absolute path to the base path of the tag database
+                this image is part of.
+        """
         ValueObjectMixin.__init__(self)
         self.base = base
         self.name = p.basename(abs_path)
@@ -29,12 +51,13 @@ class TaggedImage(ValueObjectMixin, object):
         self.abs_paths = {abs_path}
 
     def add_path(self, new_abs_path):
+        """Add a new path to the same image."""
         assert(p.basename(new_abs_path) == self.name)
         self.abs_paths.add(new_abs_path)
 
     @property
     def path(self):
-        """ canonical path is always the shortest: """
+        """Canonical absolute path; always the shortest added so far."""
         return min(self.abs_paths, key=len)
 
     def __str__(self):
@@ -65,7 +88,7 @@ class TaggedImage(ValueObjectMixin, object):
 def _raise(exc):
     raise exc
 
-class Tag(object):
+class Tag(ValueObjectMixin, object):
     _cmp_key = property(lambda self: self.name)
     def __init__(self, name, list_path, image_list, base, factory):
         self.base = base
@@ -81,8 +104,9 @@ class Tag(object):
             self = weakself()
             if self is None:
                 image_list.listeners.remove(_list_changed)
-            assert(self.image_list is image_list)
-            self.dirty = True
+            else:
+                assert(self.image_list is image_list)
+                self.dirty = True
         self.image_list.listeners.append(_list_changed)
 
     def reset(self, images):
@@ -207,6 +231,8 @@ class TagDB(_logging.InstanceLoggingMixin,
     @scanning.setter
     def scanning(self, is_scanning):
         with self._scanning_changed:
+            if is_scanning and self._scanning:
+                raise ValueError("Concurrent call to scan() detected")
             self._scanning = is_scanning
             if not is_scanning:
                 self._cancel_scan = False
@@ -253,28 +279,36 @@ class TagDB(_logging.InstanceLoggingMixin,
             assert not self.scanning
             return True
 
-    def scan(self):
-        with self._scanning_changed:
-            if self.scanning:
-                raise ValueError("Concurrent call to scan() detected")
-            else:
-                self.scanning = True
-        self._dbg("scanning %s...", self.top_path)
+    def load_tags(self):
+        walk_tags_path = os.walk(self.tags_path, onerror=_raise)
+        self._dbg("loading tags from %s", self.tags_path)
+        return self._scan(walk_tags_path)
+
+    def scan_for_untagged(self):
+        self._dbg("scanning for untagged images under %s...", self.top_path)
         walk = os.walk(self.top_path, onerror=_raise)
         if not self.tags_path.startswith(self.top_path):
             walk = itertools.chain(walk, 
                 os.walk(self.tags_path, onerror=_raise))
+        return self._scan(walk)
+
+    def _scan(self, walk):
+        self.scanning = True
 
         tagfiles = {}
+        cancelled = False
         for parent, dirs, files in walk:
+            if cancelled:
+                break
             dirs[:] = [d for d in dirs if not d.startswith('.')]
 
             for filename in files:
                 with self._scanning_changed:
-                    if self._cancel_scan:
+                    cancelled = self._cancel_scan
+                    if cancelled:
                         self._dbg("scan cancelled")
-                        self.scanning = False
-                        return False
+                if cancelled:
+                    break
 
                 path = p.join(parent, filename)
                 name, ext = p.splitext(filename)
@@ -296,10 +330,13 @@ class TagDB(_logging.InstanceLoggingMixin,
                     _warn("unrecognized file: %s", path)
 
         for tag, list_path in tagfiles.items():
+            if tag in self.tags and self.tags[tag].list_path == list_path:
+                # TODO: detect externally-changed tags files on reload
+                continue
             self._tag(tag, list_path)
 
         self.scanning = False
-        return True
+        return not cancelled
 
     def update_hashes(self):
         cnt = 0

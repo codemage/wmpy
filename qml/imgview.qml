@@ -3,7 +3,7 @@ import QtQuick 2.0
 
 // in context from Python:
 // tagdb -- QTagDB instance
-// viewProxy -- has getView which returns ImgView (indirection avoids crash-causing reference loop)
+// viewProxy -- has toggleFullscreen method (indirection avoids crash-causing reference loop)
 
 Rectangle {
     id: view
@@ -15,10 +15,8 @@ Rectangle {
     function sorted(x) { x.sort(); return x; }
     function info(x) { console.log(x, sorted(Object.keys(x))); }
 
-    property string tagName: ""
     property string tagExpr: tagdb.startingTagExpr
     property real zoomLevel: 1
-    property variant tag: tagdb.loaded && view.tagName ? tagdb.getTag(view.tagName) : false
     property variant curImages: []
     property variant allImages: null
     property variant images: view.curImages
@@ -29,13 +27,6 @@ Rectangle {
 
     function reloadImages() {
         //list.state = "";
-        if (tagdb.hasTag(view.tagExpr)) {
-            view.tagName = view.tagExpr;
-            tagExprEdit.text = "<custom tag expression>";
-        } else {
-            view.tagName = "";
-            tagExprEdit.text = view.tagExpr;
-        }
         if (!view.allImages) {
             view.allImages = tagdb.getImageList("");
         }
@@ -50,6 +41,11 @@ Rectangle {
         onLoadedChanged: {
             view.allImages = null;
             reloadImages();
+        }
+        onScanningChanged: {
+            if (!tagdb.scanning) {
+                view.allImages = tagdb.getImageList("")
+            }
         }
     }
 
@@ -170,6 +166,8 @@ Rectangle {
         onContentXChanged: if (contentX && state != "") lastContentX = contentX;
         property real lastContentY: 0
         onContentYChanged: if (contentY && state != "") lastContentY = contentY;
+        Keys.onUpPressed: { zoomLevel += 0.25; }
+        Keys.onDownPressed: { zoomLevel -= 0.25; }
         states: [
         State { name: "active"
             PropertyChanges { target: zoomed
@@ -178,6 +176,7 @@ Rectangle {
                 height: view.height
                 visible: true
                 interactive: true
+                focus: true
             }
             PropertyChanges { target: zoomed; explicit: true
                 contentX: (zoomLoader.activeWidth - view.width) / 2
@@ -229,6 +228,7 @@ Rectangle {
                     }
                 }
                 PropertyAction { target: zoomed; property: "visible" }
+                PropertyAction { target: view; property: "focus"; value: true }
             }
         }
         ]
@@ -241,11 +241,14 @@ Rectangle {
         visible: tagdb.loaded
         enabled: visible
         Text { text: "Zoom: " + view.zoomLevel; color: "white" }
-        Text { text: list.count ? list.currentIndex + "/" + list.count : "0/0"
+        Text { text: list.count ? (list.currentIndex + 1) + "/" + list.count : "0/0"
             color: "white"
+            visible: list.count > 0
         }
+        Text { text: "Scanning..."; color: "red"; visible: tagdb.scanning; }
+
         TextInput { id: tagExprEdit;
-            text: "untagged"
+            text: tagdb.startingTagExpr
             font.bold: !focus && tagdb.loaded && text == view.tagExpr && !tagdb.hasTag(text)
             color: tagExprEdit.focus ? "black" : "white"
             width: Math.max(implicitWidth, 100)
@@ -255,24 +258,6 @@ Rectangle {
                 event.accepted = true;
                 view.focus = true;
                 view.tagExpr = text;
-            }
-            onFocusChanged: {
-                if (focus && tagdb.hasTag(view.tagExpr))
-                    text = view.tagExpr;
-                if (!focus && tagdb.hasTag(text))
-                    text = "<custom tag expression>";
-            }
-        }
-        Repeater { id: listAllTags
-            model: Object.keys(tagdb.tags)
-            delegate: Text {
-                color: "white"; text: modelData
-                font.bold: modelData == view.tagName
-                MouseArea {
-                    height: parent.height
-                    width: leftColumn.width
-                    onClicked: { view.tagExpr = modelData; }
-                }
             }
         }
     }
@@ -326,63 +311,104 @@ Rectangle {
         PropertyChanges { target: scratch; visible: true }
     }
     ]
+
+    // Keyboard handling:
     focus: true;
-    Keys.priority: Keys.BeforeItem;
     Keys.forwardTo: [list];
-    Keys.onPressed: {
+    function debugKeys(event) {
         if (event.key === Qt.Key_G) {
             gc();
             tagdb.pyGarbageCollect();
-        }else if (event.key == Qt.Key_Return) {
+        } else {
+            return false;
+        }
+        event.accepted = true;
+        return true;
+    }
+    function cutToScratch() {
+        if (list.count == 0) return;
+        movedListImage.createObject(view, {
+            listEntry: list.currentItem,
+            index: list.currentIndex,
+            })
+    }
+    function pasteFromScratch() {
+        if (scratch.count == 0) return;
+        var scratchImages = [];
+        for (var i = 0; i < scratch.count; i++) {
+            scratchImages.push(scratch.model.get(i).scratchImage);
+        }
+        scratch.model.clear();
+        var curIndex = list.currentIndex;
+        images.insert(curIndex, scratchImages);
+        list.positionViewAtIndex(curIndex);
+    }
+    Timer { id: slideshow
+        interval: 15000
+        repeat: true
+        onTriggered: {
+            console.log("next slide")
+            list.incrementCurrentIndex()
+        }
+    }
+    Keys.onPressed: {
+        if (event.key === Qt.Key_Control) {
+            currentTags.state = "edit";
+        } else if (event.modifiers & Qt.ControlModifier) {
+            return;
+        } else if (event.key === Qt.Key_Return) {
             viewProxy.toggleFullscreen();
-        } else if (event.key == Qt.Key_A && event.modifiers & Qt.ShiftModifier) {
+        } else if (event.key === Qt.Key_A && event.modifiers & Qt.ShiftModifier) {
             if (list.state == "") {
                 list.state = "VIEW_ALL";
             } else {
                 list.state = "";
             }
-        } else if (event.key == Qt.Key_Escape || event.key == Qt.Key_Q) {
+        } else if (event.key === Qt.Key_Escape || event.key === Qt.Key_Q) {
             if (view.state == "") {
                 Qt.quit();
             } else {
-                if (view.state != "rearrange")
+                if (view.state == "rearrange")
+                    pasteFromScratch();
+                else
                     view.state = "";
-                // TODO: allow Q to undo a rearrange
             }
-        } else if (event.key == Qt.Key_T) {
-            currentTags.state = (currentTags.state == "edit" ? "" : "edit");
-        } else if (event.key == Qt.Key_Z) {
-            zoomed.state = (zoomed.state == "active" ? "" : "active");
-        } else if (event.key == Qt.Key_X) {
-            zoomLevel =  1;
-        } else if (event.key == Qt.Key_Up) {
-            if (view.state == "zoomed" || event.modifiers & Qt.ShiftModifier) {
-                zoomLevel += 0.25;
-            } else if (scratch.count > 0) {
-                var scratchImages = [];
-                for (var i = 0; i < scratch.count; i++) {
-                    scratchImages.push(scratch.model.get(i).scratchImage);
+        } else if (event.key === Qt.Key_S) {
+            if (event.modifiers & Qt.ShiftModifier) {
+                if (slideshow.running) {
+                    console.log("slideshow mode stopped");
+                    slideshow.stop();
+                } else {
+                    console.log("slideshow mode started");
+                    slideshow.start();
                 }
-                scratch.model.clear();
-                var curIndex = list.currentIndex;
-                images.insert(curIndex, scratchImages);
-                list.positionViewAtIndex(curIndex);
+            } else {
+                tagdb.scan_for_untagged();
             }
-        } else if (event.key == Qt.Key_Down) {
-            if (view.state == "zoomed" || event.modifiers & Qt.ShiftModifier) {
-                zoomLevel -= 0.25;
-            } else if (list.count > 0) {
-                movedListImage.createObject(view, {
-                    listEntry: list.currentItem,
-                    index: list.currentIndex,
-                    })
-            }
+        } else if (event.key === Qt.Key_T) {
+            currentTags.state = (currentTags.state == "edit" ? "" : "edit");
+        } else if (event.key === Qt.Key_Z) {
+            zoomed.state = (zoomed.state == "active" ? "" : "active");
+        } else if (event.key === Qt.Key_X) {
+            zoomLevel =  1;
+        } else if (event.key === Qt.Key_Up) {
+            pasteFromScratch();
+        } else if (event.key === Qt.Key_Down) {
+            cutToScratch();
         } else {
-            //console.log("main view rejected key event: ", event.key);
+            console.log("main view rejected key event: ", event.key, event.nativeScanCode, event.modifiers);
             return;
         }
         //console.log("main view accepted key event:", event.key)
         event.accepted = true;
     }
+    Keys.onReleased: {
+        if (event.key === Qt.Key_Control) {
+            currentTags.state = "";
+            view.focus = true;
+        }
+    }
+
+    // TODO: use TagEditor component
 }
 

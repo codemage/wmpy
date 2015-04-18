@@ -5,6 +5,7 @@ import collections
 import gc
 import logging
 import os, os.path
+import io
 import sys
 import time
 import threading
@@ -21,8 +22,7 @@ import weakref
 # - ability to split out and separately view/tag image regions
 # - detection of images with incorrect extensions, w/possible automatic correction
 # - ability to persist rearranged tag views back to .list files
-# - fast-start mode that does not scan for images
-#   - need to track known-untagged files
+# - tracking of known-untagged files
 
 if __name__ == '__main__':
     if os.environ.get('IMGVIEW_DEBUG', '') != '':
@@ -130,6 +130,7 @@ class QTagDB(wmpy.InstanceLoggingMixin,
     loaded, loadedChanged = wmpyqt.SimpleProperty(bool, '_loaded')
     failed, failedChanged = wmpyqt.SimpleProperty(str, '_failed')
     tags, tagsChanged = wmpyqt.SimpleProperty('QVariantMap', '_tags')
+    scanning, scanningChanged = wmpyqt.SimpleProperty(bool, '_scanning')
     startingTagExpr, startingTagExprChanged = wmpyqt.SimpleProperty(str, '_startingTagExpr')
 
     def __init__(self, startingTagExpr, *args, **kw):
@@ -143,6 +144,7 @@ class QTagDB(wmpy.InstanceLoggingMixin,
             self._db = None
             self._qimages = {}
             self._returned_image_lists = []
+            self._scanning = False
             self.close()
 
     @qt.core.Slot()
@@ -180,10 +182,13 @@ class QTagDB(wmpy.InstanceLoggingMixin,
             self._db = imgtag.TagDB(config_path)
             def _load(self=self):
                 try:
-                    completed = self._db.scan()
+                    if self._startingTagExpr == 'untagged':
+                        completed = self._db.scan_for_untagged()
+                    else:
+                        completed = self._db.load_tags()
                     if not completed:
                         self._db = None
-                except:
+                except Exception:
                     self._warn('failed to load', exc_info=True)
                     self.failed = str(sys.exc_info()[1])
                     self._db = None
@@ -210,8 +215,35 @@ class QTagDB(wmpy.InstanceLoggingMixin,
                 image.clear()
             self._qimages = {}
 
-    scan = qt.core.Slot()(imgtag.TagDB.scan)
-    save_dirty = qt.core.Slot()(imgtag.TagDB.save_dirty)
+    @qt.core.Slot()
+    def scan_for_untagged(self):
+        with _lock:
+            if self.scanning:
+                self._warn('attempted to start a concurrent scan')
+                return
+            self.scanning = True
+        def _scan(self=self):
+            try:
+                completed = self._db.scan_for_untagged()
+                if not completed:
+                    self._warn('scan cancelled')
+            except Exception:
+                # TODO: propagate to the UI somehow
+                self._warn('failed to scan for untagged images', exc_info=True)
+            finally:
+                with _lock:
+                    self.scanning = False
+        thread = threading.Thread(target=_scan)
+        thread.daemon = True
+        thread.start()
+
+    @qt.core.Slot()
+    def save_dirty(self):
+        try:
+            self._db.save_dirty()
+        except Exception:
+            # TODO: propagate to the UI somehow
+            self._logger.exception('Error saving changes to tags')
 
     @qt.core.Slot(str, result=bool)
     def hasTag(self, name):
@@ -221,7 +253,7 @@ class QTagDB(wmpy.InstanceLoggingMixin,
     def getTag(self, name):
         with _lock:
             if not self.loaded:
-                _warn("call to getTag when tagdb not loaded")
+                self._warn("call to getTag when tagdb not loaded")
                 return None
             if name not in self._db.tags:
                 self._db._tag(name)
@@ -260,6 +292,7 @@ class QTagDB(wmpy.InstanceLoggingMixin,
                 except Exception:
                     _warn("error in tagexpr", exc_info=True)
                     traceback.print_exc()
+                    return None
             imagelist[:] = (self.getImage(i.name) for i in images)
             qt.qml.Engine.setObjectOwnership(imagelist, qt.qml.Engine.JavaScriptOwnership)
             # the closure over imagelist in the destroyed signal here actually keeps a Python ref alive!
@@ -401,9 +434,14 @@ def main(tags_dir='.', starting_tagexpr='untagged'):
     return qt.widgets.Application.exec_()
 
 if __name__ == '__main__':
+    stdout_encoding = sys.stdout.encoding
+    sys.stdout = io.TextIOWrapper(
+	sys.stdout.detach(),
+	encoding=stdout_encoding,
+	errors="backslashreplace",
+	line_buffering=True)
     # XXX for some reason QAppliction() loses the last argument in the list,
     #     on Windows, so add an extra one:
-    # TODO: figure out why this is.
     app = qt.widgets.Application(sys.argv + ['__extra__'])
     try:
         qt_argv = app.arguments()

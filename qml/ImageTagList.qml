@@ -7,7 +7,7 @@ Rectangle { id: currentTagsBackground
     width: currentTags.width + 20
     height: currentTags.height + 20
     visible: image != null
-    Column { id: currentTags
+    FocusScope { anchors.fill: parent; id: currentTagsFocus; Column { id: currentTags
         anchors.centerIn: parent;
         spacing: 10;
         Repeater {
@@ -19,28 +19,36 @@ Rectangle { id: currentTagsBackground
             }
             property variant editor: Component { Text {
                 text: modelData
-                color: tagSelect.containsMouse ? "yellow" : "white"
+                enabled: true
+                focus: index == 0
+                color: focus || tagSelect.containsMouse ? "yellow" : "white"
                 font.bold: hasTag(modelData)
                 horizontalAlignment: Text.AlignHCenter
+                KeyNavigation.up: index > 0 ? currentTagsRepeater.itemAt(index+1) : currentTagsRepeater.itemAt(currentTagsRepeater.count - 1)
+                KeyNavigation.down: index < (currentTagsRepeater.count - 1) ? currentTagsRepeater.itemAt(index+1) : currentTagsRepeater.itemAt(0)
+                function toggle() { if (view.image.toggleTag) view.image.toggleTag(modelData); }
+                Keys.onLeftPressed: { toggle(); }
+                Keys.onRightPressed: { toggle(); }
                 MouseArea {
                     id: tagSelect
                     hoverEnabled: true
                     x: -10; width: currentTagsBackground.width
                     y: -5; height: parent.height+10
-                    onClicked: {
-                        if (image.toggleTag) {
-                            image.toggleTag(modelData);
-                        }
-                        // keyboardHandler.focus = true;
-                    }
+                    onClicked: { toggle(); }
                 }
             }}
         }
-    }
+    }}
     states: State { name: "edit";
         PropertyChanges { target: currentTagsRepeater
             model: allTags
             delegate: currentTagsRepeater.editor
+        }
+        PropertyChanges { target: currentTagsBackground
+            color: "#EE000000"
+        }
+        PropertyChanges { target: currentTagsFocus
+            focus: true
         }
     }
 }
