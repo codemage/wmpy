@@ -49,6 +49,8 @@ def by_hash(hashval):
 def by_name(name):
     if name in app.db.images:
         return flask.jsonify(image_json(app.db.images[name]))
+    elif name in app.db.images_no_extension:
+        return flask.jsonify(image_json(app.db.images_no_extension[name]))
     else:
         flask.abort(404)
 
@@ -70,10 +72,24 @@ def image(name):
         flask.abort(404)
     return flask.send_file(image.path)
 
+@app.route("/download_event", methods=["POST"])
+def download_event():
+  filename = flask.request.form["filename"]
+  if os.path.basename(filename) in app.db.images:
+    return ("EXISTING", None, {"Content-Type": 'text/plain'})
+  if filename.startswith(app.db.top_path):
+    app.db._image(os.path.relpath(filename, app.db.top_path))
+    return ("OK", None, {"Content-Type": 'text/plain'})
+  else:
+    print("path mismatch:", app.db.top_path, filename)
+    flask.abort(404)
+
 def main():
-    app.db = imgtag.TagDB(config_path=sys.argv[1] + "/imgtag.cfg")
-    app.db.scan()
-    app.run(debug=True)
+    tags_dir = sys.argv[1]
+    config_path = os.path.join(tags_dir, 'imgtag.cfg')
+    app.db = imgtag.TagDB(config_path=config_path)
+    app.db.scan_for_untagged()
+    app.run(debug=True, use_reloader=False)
 
 if __name__ == '__main__':
     main()
