@@ -245,6 +245,10 @@ class QTagDB(wmpy.InstanceLoggingMixin,
             # TODO: propagate to the UI somehow
             self._logger.exception('Error saving changes to tags')
 
+    @qt.core.Slot(str)
+    def mark_viewed(self, name):
+        self._db.mark_viewed(self._db.images[name])
+
     @qt.core.Slot(str, result=bool)
     def hasTag(self, name):
         return self.loaded and name in self._db.tags

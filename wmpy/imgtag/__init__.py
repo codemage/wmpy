@@ -11,6 +11,7 @@ TODO: determine how FAT represents filenames, whether Linux will write
 A "tag database" is a subdirectory tree containing images, with an "imgtag"
 directory at the root containing the metadata used by this module.
 """
+import datetime
 import collections
 import copy
 import functools
@@ -31,6 +32,37 @@ from .. import ValueObjectMixin
 from . import tagexpr
 
 _logger, _dbg, _info, _warn = _logging.get_logging_shortcuts(__name__)
+
+_LAST_VIEWED_DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S"
+
+def _ReadLastViewed(path):
+    if not p.isfile(path):
+        return {}
+    
+    last_viewed_cache = {}
+    with open(path, 'rb') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            name, last_viewed_bytes = line.rsplit(None, 1)
+            last_viewed = datetime.datetime.strptime(
+                    last_viewed_bytes.decode('utf-8'),
+                    _LAST_VIEWED_DATETIME_FORMAT)
+            last_viewed_cache[name.decode('utf-8')] = last_viewed
+    
+    return last_viewed_cache
+
+
+def _WriteLastViewed(path, last_viewed_cache):
+    with open(path, 'wb') as fh:
+        for name, last_viewed in last_viewed_cache.items():
+            last_viewed_str = last_viewed.strftime(_LAST_VIEWED_DATETIME_FORMAT)
+            fh.write(name.encode('utf-8'))
+            fh.write(b' ')
+            fh.write(last_viewed_str.encode('utf-8'))
+            fh.write(b'\n')
+
 
 class TaggedImage(ValueObjectMixin, object):
     _cmp_key = property(lambda self: self.name)
@@ -182,6 +214,9 @@ class TagDB(_logging.InstanceLoggingMixin,
     @property
     def _hash_cache_path(self):
         return self._path_from_cfg('hash_cache', p.join(self.tags_path, '.hashes'))
+    @property
+    def _last_viewed_cache_path(self):
+        return self._path_from_cfg('last_viewed', p.join(self.tags_path, '.imgtag_last_viewed'))
 
     def __init__(self, config_path='./imgtag.cfg', config=None):
         _logging.InstanceLoggingMixin.__init__(self)
@@ -214,10 +249,12 @@ class TagDB(_logging.InstanceLoggingMixin,
             os.mkdir(self.tags_path)
 
         self._hash_cache = _io.FileHashCache(self.top_path, self._hash_cache_path)
+        self._last_viewed = _ReadLastViewed(self._last_viewed_cache_path)
         self._scanning = False
         self._scanning_changed = threading.Condition()
         self._cancel_scan = False
 
+        self.images_no_extension = {}
         self.images = {}
         self.tags = {}
 
@@ -249,10 +286,17 @@ class TagDB(_logging.InstanceLoggingMixin,
                     self._warn("path %s from %s, but file is at %s",
                         abspath, source, self.images[filename].path)
         else:
-            self.images[filename] = TaggedImage(
+            image = TaggedImage(
                 abs_path=abspath,
                 tags=self._mm_tags,
                 base=self.top_path)
+            image.last_viewed = self._last_viewed.get(image.name)
+
+            self.images[filename] = image
+
+            prefix, _ = os.path.splitext(filename)
+            self.images_no_extension[prefix] = self.images[filename]
+
         return self.images[filename]
 
     def _tag(self, tagname, list_path=None):
@@ -383,8 +427,16 @@ class TagDB(_logging.InstanceLoggingMixin,
             images = sorted(images)
         return [image.path for image in images]
 
+    def mark_viewed(self, image):
+        self._last_viewed[image.name] = datetime.datetime.now()
+        image.last_viewed = self._last_viewed[image.name]
+
+    def get_last_viewed(self, image):
+        return self._last_viewed.get(image.name)
+
     def save_dirty(self):
         self._hash_cache.save()
+        _WriteLastViewed(self._last_viewed_cache_path, self._last_viewed)
         for tag in self.tags.values():
             tag.save()
         if self.config != self.orig_config:

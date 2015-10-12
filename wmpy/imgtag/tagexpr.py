@@ -191,5 +191,15 @@ class Shuffled(UnaryExpr):
     def __repr__(self):
         return "Shuffled(%r)" % (self.operand,)
 
-tagexpr_builtins = {'shuffle': Shuffled}
+class Unseen(UnaryExpr):
+    def _evaluate(self, operand_result, _image):
+        return operand_result and _image.last_viewed is None
+
+    def __str__(self):
+        return "unseen(%s)" % (self.operand,)
+
+    def __repr__(self):
+        return "Unseen(%r)" % (self.operand,)
+
+tagexpr_builtins = {'shuffle': Shuffled, 'unseen': Unseen}
 

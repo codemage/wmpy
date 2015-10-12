@@ -23,7 +23,12 @@ Rectangle {
     property variant image: (tagdb.loaded && list.currentIndex >= 0 && list.currentIndex < view.images.length) ? view.images.get(list.currentIndex) : null
     property variant scratchLoader: null
     // onCurImagesChanged: { console.log("current images changed, new count:", curImages ? curImages.length : "(null)"); }
-    onImageChanged: { console.log("current image: ", image ? image.name : "None"); }
+    onImageChanged: {
+	console.log("current image: ", image ? image.name : "None");
+	if (image && image.name && tagdb) {
+	    tagdb.mark_viewed(image.name);
+	}
+    }
 
     function reloadImages() {
         //list.state = "";
