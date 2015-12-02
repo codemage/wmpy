@@ -465,4 +465,4 @@ if __name__ == '__main__':
     finally:
         del app
 
-# vim: et sw=4 sts=4 encoding=utf-8
+# vim: et sw=4 sts=4

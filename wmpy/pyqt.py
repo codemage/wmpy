@@ -148,7 +148,7 @@ class ListModel(WatchableList, HasProperties, qt.core.AbstractListModel):
         self.add_listener_gen('del', weakmethod(self.delete_gen))
 
     def roleNames(self):
-        return {32: 'value'}
+        return {32: b'value'}
 
     def update_gen(self, _also_self, _eventname, idx, new_value):
         if isinstance(idx, slice):
@@ -265,7 +265,7 @@ class ListBase(HasProperties, qt.core.AbstractListModel):
         self._reset()
 
     def roleNames(self):
-        return {0: 'value'}
+        return {0: b'value'}
 
     def _reset(self):
         self._items = []
