@@ -369,6 +369,10 @@ Rectangle {
             } else {
                 list.state = "";
             }
+        } else if (event.key === Qt.Key_C) {
+            if (image) {
+                tagdb.setClipboard(image.path)
+            }
         } else if (event.key === Qt.Key_Escape || event.key === Qt.Key_Q) {
             if (view.state == "") {
                 Qt.quit();

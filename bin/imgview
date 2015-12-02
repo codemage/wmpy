@@ -307,6 +307,12 @@ class QTagDB(wmpy.InstanceLoggingMixin,
             #    weakref.ref(imagelist, lambda _: _dbg("cleaned up image list for %s@%x", tagexpr, imagelist_id)))
             return imagelist
 
+    # XXX this is out of place, but whatever
+    @qt.core.Slot(str)
+    def setClipboard(self, text):
+        clipboard = qt.widgets.Application.clipboard()
+        clipboard.setText(text)
+
 qt.qml.RegisterType(QTagDB, "info.codethink.wmpy", 1, 0, "TaggedImageDatabase")
 
 
@@ -458,3 +464,5 @@ if __name__ == '__main__':
         sys.exit(main.parse_and_call(qt_argv))
     finally:
         del app
+
+# vim: et sw=4 sts=4 encoding=utf-8
